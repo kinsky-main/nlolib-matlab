@@ -118,7 +118,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          library="$(find "$GITHUB_WORKSPACE/build" -name 'libnlolib.so' -not -path '*/matlab_toolbox/*' | head -n 1)"
+          library="$(find "$GITHUB_WORKSPACE" -name 'libnlolib.so' -not -path '*/matlab_toolbox/*' | head -n 1)"
           test -n "$library"
           echo "NLOLIB_LIBRARY=$library" >> "$GITHUB_ENV"
           echo "Built library: $library"
