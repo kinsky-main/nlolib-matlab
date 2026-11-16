@@ -5,7 +5,7 @@ name: ci
 #               checkout and an interpreter, so every push gets an answer fast.
 #   * test   -- builds the core library with this checkout as its MATLAB
 #               binding and runs the MATLAB test suite through loadlibrary.
-#               The runners have no GPU; the tests use the CPU backend.
+#               The runners have no GPU, so the library is built CPU-only.
 
 on:
   pull_request:
@@ -74,17 +74,18 @@ jobs:
           ref: ${{ needs.checks.outputs.core_ref }}
           path: core
 
-      - name: Install Vulkan loader and glslang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvulkan-dev glslang-tools
-
       - name: Set up MATLAB
         uses: matlab-actions/setup-matlab@v3
         with:
           release: ${{ env.MATLAB_RELEASE }}
           cache: true
 
+      # Vulkan is off here, unlike the release build. On a runner that has the
+      # Vulkan loader but no driver, the default AUTO backend fails instance
+      # creation and propagate returns an error instead of using the CPU, which
+      # would fail every FFI test that propagates. With the backend compiled
+      # out, AUTO is the CPU and the whole suite runs.
+      #
       # nlo_configure_verified fails if any -D did not reach the project; the
       # option names are unprefixed and a misspelled one is silently ignored.
       - name: Configure
@@ -99,8 +100,8 @@ jobs:
             NLOLIB_BUILD_DOCS=OFF \
             NLOLIB_BUILD_BENCHMARKS=OFF \
             NLOLIB_BUILD_EXAMPLES=OFF \
-            ENABLE_VULKAN_BACKEND=ON \
-            ENABLE_VKFFT=ON \
+            ENABLE_VULKAN_BACKEND=OFF \
+            ENABLE_VKFFT=OFF \
             NLOLIB_MATLAB_DIR="$GITHUB_WORKSPACE"
 
       - name: Build
