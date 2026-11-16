@@ -112,10 +112,20 @@ jobs:
       # The same script the test_matlab_bindings CTest case runs, started
       # through the action instead: on a hosted runner MATLAB is only licensed
       # when launched that way, so `matlab -batch` from ctest cannot start.
+      # Asked of the build rather than assumed: where the library lands
+      # depends on the generator and on which bindings are configured.
+      - name: Locate the built library
+        shell: bash
+        run: |
+          set -euo pipefail
+          library="$(find "$GITHUB_WORKSPACE/build" -name 'libnlolib.so' -not -path '*/matlab_toolbox/*' | head -n 1)"
+          test -n "$library"
+          echo "NLOLIB_LIBRARY=$library" >> "$GITHUB_ENV"
+          echo "Built library: $library"
+
       - name: Run the MATLAB tests
         uses: matlab-actions/run-command@v3
         env:
-          NLOLIB_LIBRARY: ${{ github.workspace }}/build/src/libnlolib.so
           NLOLIB_API_PARITY_MANIFEST: ${{ github.workspace }}/core/tests/api_parity.json
         with:
           command: run('tests/run_matlab_tests.m')
