@@ -12,8 +12,8 @@ function mmtools_modal_vs_profile_grid_rk4ip(varargin)
 %     'smoke'  - true uses a reduced-size manual validation case.
 
 params = parse_inputs(varargin{:});
-repoRoot = setup_matlab_example_environment();
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", "mmtools_modal_vs_profile_grid");
+setup_matlab_example_environment();
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", "mmtools_modal_vs_profile_grid");
 if ~isfolder(outputDir)
     mkdir(outputDir);
 end

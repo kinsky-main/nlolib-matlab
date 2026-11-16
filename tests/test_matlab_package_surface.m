@@ -1,7 +1,7 @@
 function tests = test_matlab_package_surface()
 %TEST_MATLAB_PACKAGE_SURFACE Checks the public MATLAB wrapper surface.
 %
-%   The counterpart of tests/python/test_python_package_surface.py. The MATLAB
+%   The counterpart of tests/test_python_package_surface.py in nlolib-python. The MATLAB
 %   wrapper drifted behind the Python and Julia packages for a long time --
 %   most visibly, it exposed no named constants at all and callers passed
 %   magic integers -- with nothing to catch it. These tests pin the surface
@@ -19,11 +19,23 @@ end
 
 function setupOnce(testCase)
 scriptDir = fileparts(mfilename('fullpath'));
-testCase.TestData.repoRoot = fileparts(fileparts(scriptDir));
+bindingRoot = fileparts(scriptDir);
+% tests/api_parity.json belongs to the core repository. CTest names it; failing
+% that it is in ./core (tools/fetch_core.sh), or in the parent directory when
+% this repository is the matlab/ submodule of the core repository.
+candidates = {getenv('NLOLIB_API_PARITY_MANIFEST'), ...
+              fullfile(bindingRoot, 'core', 'tests', 'api_parity.json'), ...
+              fullfile(fileparts(bindingRoot), 'tests', 'api_parity.json')};
+found = candidates(cellfun(@(p) ~isempty(p) && isfile(p), candidates));
+if isempty(found)
+    testCase.TestData.manifestPath = candidates{end};
+else
+    testCase.TestData.manifestPath = found{1};
+end
 end
 
 function test_constants_match_the_parity_manifest(testCase)
-manifestPath = fullfile(testCase.TestData.repoRoot, 'tests', 'api_parity.json');
+manifestPath = testCase.TestData.manifestPath;
 verifyTrue(testCase, isfile(manifestPath), ...
            sprintf('parity manifest not found: %s', manifestPath));
 

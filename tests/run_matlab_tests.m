@@ -1,8 +1,7 @@
 function run_matlab_tests()
 scriptDir = fileparts(mfilename('fullpath'));
-repoRoot = fileparts(fileparts(scriptDir));
 
-addpath(fullfile(repoRoot, "matlab"), "-begin");
+addpath(fileparts(scriptDir), "-begin");
 addpath(scriptDir, "-begin");
 
 results = [ ...

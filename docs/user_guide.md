@@ -3,7 +3,7 @@
 This guide is a task-oriented walkthrough of the MATLAB binding: how to install
 it, how to describe a problem, how to run it, and how to read the result. The
 symbol-level reference lives in @ref matlab_binding; the mathematics of the
-runtime operators is in [Runtime Operator Mathematics](runtime_operators.md).
+runtime operators is in [Runtime Operator Mathematics](../../docs/runtime_operators.md).
 
 Everything below runs against `nlolib.NLolib`, a thin `loadlibrary`/`calllib`
 wrapper over the native shared library. There is no Python or MEX dependency.
@@ -218,7 +218,7 @@ Note the factors of one half: the solver applies \f$D(\omega)\f$ as written, so
 the GLSE term \f$i(\beta_2/2)\partial_t^2\f$ maps to `beta2 -> beta2/2`, and a
 power-loss coefficient \f$\alpha_{\mathrm{pow}}\f$ maps to
 `loss -> alpha_pow/2`. See [Runtime Operator
-Mathematics](runtime_operators.md).
+Mathematics](../../docs/runtime_operators.md).
 
 <a name="pulse"></a>
 
@@ -537,7 +537,7 @@ for idx = 1:size(result.records, 1)
 end
 ```
 
-See [`examples/matlab/standalone_transverse_grin_beam.m`](../examples/matlab/standalone_transverse_grin_beam.m)
+See [`examples/matlab/standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m)
 for the complete script, which checks the beam centroid against
 \f$x_0\cos(gz)\f$.
 
@@ -567,7 +567,7 @@ linearOperator = struct( ...
 ```
 
 Note that the temporal symbol is `wt`, not `w`, once the run is a tensor run.
-Full script: [`examples/matlab/standalone_spatiotemporal_kerr_bullet.m`](../examples/matlab/standalone_spatiotemporal_kerr_bullet.m).
+Full script: [`examples/matlab/standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m).
 
 Each record comes back as one flat row of `nt*nx*ny` samples, in
 `TENSOR_LAYOUT_XYT_T_FAST` order. `nlolib.tensor_record_view` reshapes a row
@@ -873,15 +873,15 @@ plotting helpers.
 
 | Script | Shows |
 |---|---|
-| [`standalone_transverse_grin_beam.m`](../examples/matlab/standalone_transverse_grin_beam.m) | transverse x-y run, potential grid, analytical centroid check |
-| [`standalone_spatiotemporal_kerr_bullet.m`](../examples/matlab/standalone_spatiotemporal_kerr_bullet.m) | full 3+1D Kerr propagation against Gaussian beam/pulse laws |
-| [`grin_fiber_soliton_fission.m`](../examples/matlab/grin_fiber_soliton_fission.m) | 3+1D higher-order soliton fission and dispersive wave in a GRIN fibre |
-| [`runtime_temporal_demo.m`](../examples/matlab/runtime_temporal_demo.m) | function-handle linear operator, log buffer, progress options |
-| [`second_order_soliton_rk4ip.m`](../examples/matlab/second_order_soliton_rk4ip.m) | analytical soliton validation with step-history telemetry |
-| [`linear_drift_rk4ip.m`](../examples/matlab/linear_drift_rk4ip.m) | purely dispersive drift with an analytical reference |
-| [`runtime_callable_operator_rk4ip.m`](../examples/matlab/runtime_callable_operator_rk4ip.m) | callable runtime operators end to end |
-| [`coupled_dispersion_nonlinearity_diffraction_rk4ip.m`](../examples/matlab/coupled_dispersion_nonlinearity_diffraction_rk4ip.m) | coupled 3+1D dispersion, nonlinearity, and diffraction |
-| [`grin_fiber_xy_rk4ip.m`](../examples/matlab/grin_fiber_xy_rk4ip.m) | GRIN transverse phase validation |
+| [`standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m) | transverse x-y run, potential grid, analytical centroid check |
+| [`standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m) | full 3+1D Kerr propagation against Gaussian beam/pulse laws |
+| [`grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m) | 3+1D higher-order soliton fission and dispersive wave in a GRIN fibre |
+| [`runtime_temporal_demo.m`](../examples/runtime_temporal_demo.m) | function-handle linear operator, log buffer, progress options |
+| [`second_order_soliton_rk4ip.m`](../examples/second_order_soliton_rk4ip.m) | analytical soliton validation with step-history telemetry |
+| [`linear_drift_rk4ip.m`](../examples/linear_drift_rk4ip.m) | purely dispersive drift with an analytical reference |
+| [`runtime_callable_operator_rk4ip.m`](../examples/runtime_callable_operator_rk4ip.m) | callable runtime operators end to end |
+| [`coupled_dispersion_nonlinearity_diffraction_rk4ip.m`](../examples/coupled_dispersion_nonlinearity_diffraction_rk4ip.m) | coupled 3+1D dispersion, nonlinearity, and diffraction |
+| [`grin_fiber_xy_rk4ip.m`](../examples/grin_fiber_xy_rk4ip.m) | GRIN transverse phase validation |
 
 Run one from the repository with:
 
@@ -895,7 +895,7 @@ Plots are written under `examples/matlab/output/<example-name>/`.
 ## Related Reference
 
 - @ref matlab_binding — generated symbol reference
-- [MATLAB Binding Guide](../matlab/README.md) — build-tree usage, tests, design notes
-- [Runtime Operator Mathematics](runtime_operators.md)
-- [Build and Install](build_and_install.md)
+- [MATLAB Binding Guide](binding_guide.md) — build-tree usage, tests, design notes
+- [Runtime Operator Mathematics](../../docs/runtime_operators.md)
+- [Build and Install](../../docs/build_and_install.md)
 - @ref c_api — the underlying C entry points

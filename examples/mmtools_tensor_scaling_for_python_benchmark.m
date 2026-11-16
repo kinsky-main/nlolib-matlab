@@ -15,8 +15,8 @@ function mmtools_tensor_scaling_for_python_benchmark(varargin)
 %     'runs'   - measured runs per scale. Default: 1.
 
 params = parse_inputs(varargin{:});
-repoRoot = setup_matlab_example_environment();
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", "mmtools_tensor_scaling");
+setup_matlab_example_environment();
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", "mmtools_tensor_scaling");
 if ~isfolder(outputDir)
     mkdir(outputDir);
 end

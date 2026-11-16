@@ -13,7 +13,7 @@ or **Home → Add-Ons → Get Add-Ons** inside MATLAB and search for `nlolib`.
 To install straight from this release instead:
 
 ```matlab
-f = websave([tempname '.mltbx'], 'https://github.com/kinsky-main/nlo-rk4ip-code/releases/latest/download/nlolib.mltbx');
+f = websave([tempname '.mltbx'], 'https://github.com/kinsky-main/nlolib-matlab/releases/latest/download/nlolib.mltbx');
 matlab.addons.toolbox.installToolbox(f);
 ```
 
@@ -46,4 +46,4 @@ and from the first 1.13.0 build, carry a different identifier and must be
 uninstalled by hand — the user guide has a snippet.
 
 Full documentation:
-[`docs/matlab_user_guide.md`](https://github.com/kinsky-main/nlo-rk4ip-code/blob/main/docs/matlab_user_guide.md)
+[`docs/matlab_user_guide.md`](https://github.com/kinsky-main/nlolib-matlab/blob/main/docs/user_guide.md)

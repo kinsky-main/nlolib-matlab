@@ -1,22 +1,32 @@
 param(
     [string]$BuildDir = "build-mltbx-win",
-    [string]$Config = "Release"
+    [string]$Config = "Release",
+    # Core nlolib checkout to build from. Defaults to .\core (the checkout the
+    # workflows and tools/fetch_core.sh create at the revision CORE_REF pins),
+    # then to the parent directory, for when this repository is the matlab\
+    # submodule of the core repository.
+    [string]$CoreDir = $env:NLOLIB_CORE_DIR
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
-function Get-ProjectVersion {
-    $cmakeText = Get-Content -Raw -Encoding utf8 (Join-Path $repoRoot "CMakeLists.txt")
-    $match = [regex]::Match($cmakeText, 'project\([^)]*VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
-    if (-not $match.Success) {
-        throw "Could not parse CMake project version"
+if (-not $CoreDir) {
+    foreach ($candidate in @((Join-Path $repoRoot "core"), (Join-Path $repoRoot ".."))) {
+        if (Test-Path (Join-Path $candidate "src\nlolib.h")) { $CoreDir = $candidate; break }
     }
-    return $match.Groups[1].Value
 }
+if (-not $CoreDir -or -not (Test-Path (Join-Path $CoreDir "src\nlolib.h"))) {
+    throw "No core nlolib checkout found. Run tools/fetch_core.sh, or pass -CoreDir."
+}
+$CoreDir = (Resolve-Path $CoreDir).Path
 
-$version = Get-ProjectVersion
+# The toolbox version is this repository's own; package_mltbx reads the same file.
+$version = (Get-Content -Raw -Encoding utf8 (Join-Path $repoRoot "VERSION")).Trim()
+if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "Expected MAJOR.MINOR.PATCH in VERSION, found '$version'"
+}
 
 # NOTE: these option names are NOT prefixed. They were renamed from NLO_* in
 # commit 2669906; a -D for a name the project never reads is silently ignored
@@ -35,7 +45,7 @@ $cmakeOptions = [ordered]@{
     ENABLE_VKFFT            = "ON"
 }
 
-$cmakeArgs = @("-S", ".", "-B", $BuildDir)
+$cmakeArgs = @("-S", $CoreDir, "-B", $BuildDir, "-DNLOLIB_MATLAB_DIR=$repoRoot")
 foreach ($name in $cmakeOptions.Keys) {
     $cmakeArgs += "-D$name=$($cmakeOptions[$name])"
 }
@@ -70,13 +80,7 @@ if ($optionProblems.Count -gt 0) {
 cmake --build $BuildDir --config $Config
 if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
 
-# package_mltbx reads the version back out of CMakeLists.txt to name the bundle
-# and stamp its metadata, so the tree must already carry the version being
-# released. Fail here rather than ship a bundle named after something else.
-python tools/release/check_versions.py
-if ($LASTEXITCODE -ne 0) { throw "Project version and its packaged copies disagree" }
-
-matlab -batch "addpath('matlab'); package_mltbx('$BuildDir', '$Config')"
+matlab -batch "addpath('$repoRoot'); package_mltbx('$BuildDir', '$Config')"
 if ($LASTEXITCODE -ne 0) { throw "MATLAB toolbox packaging failed" }
 
 $artifact = Join-Path $repoRoot "dist/nlolib-$version-win64.mltbx"

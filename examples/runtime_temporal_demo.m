@@ -1,5 +1,5 @@
 function runtime_temporal_demo()
-repoRoot = setup_matlab_example_environment();
+setup_matlab_example_environment();
 
 n = 512;
 dt = 0.02;
@@ -45,7 +45,7 @@ fprintf("runtime_temporal_demo: propagated %d samples.\n", n);
 fprintf("initial power=%.6e final power=%.6e\n", ...
         sum(abs(field0) .^ 2), sum(abs(finalField) .^ 2));
 
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", "runtime_temporal_demo");
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", "runtime_temporal_demo");
 if ~isfolder(outputDir)
     mkdir(outputDir);
 end

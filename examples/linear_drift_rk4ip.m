@@ -1,7 +1,7 @@
 function slopeRelError = linear_drift_rk4ip()
 %LINEAR_DRIFT_RK4IP Linear dispersive drift example with plot parity.
 
-repoRoot = setup_matlab_example_environment();
+setup_matlab_example_environment();
 
 numSamples = 1024;
 dt = 0.01;
@@ -54,7 +54,7 @@ slopeRelError = abs(measuredSlope - predictedSlope) / max(abs(predictedSlope), 1
 referenceRecords = linear_reference_records(field0, zRecords, beta2, dt);
 errorCurve = relative_l2_error_curve(records, referenceRecords);
 
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", "linear_drift");
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", "linear_drift");
 if ~isfolder(outputDir)
     mkdir(outputDir);
 end

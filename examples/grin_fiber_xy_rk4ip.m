@@ -1,14 +1,14 @@
 function grin_fiber_xy_rk4ip()
 %GRIN_FIBER_XY_RK4IP GRIN transverse phase validations with analytical refs.
 
-repoRoot = setup_matlab_example_environment();
+setup_matlab_example_environment();
 
 api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "auto", ...
     "device_heap_fraction", 0.70);
-outputRoot = fullfile(repoRoot, "examples", "matlab", "output", "grin_fiber_xy");
+outputRoot = fullfile(fileparts(mfilename("fullpath")), "output", "grin_fiber_xy");
 if ~isfolder(outputRoot)
     mkdir(outputRoot);
 end

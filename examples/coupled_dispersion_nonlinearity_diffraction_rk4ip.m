@@ -1,7 +1,7 @@
 function coupled_dispersion_nonlinearity_diffraction_rk4ip()
 %COUPLED_DISPERSION_NONLINEARITY_DIFFRACTION_RK4IP Coupled 3+1D demo.
 
-repoRoot = setup_matlab_example_environment();
+setup_matlab_example_environment();
 
 api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
@@ -75,7 +75,7 @@ fprintf("coupled propagation completed: grid=(t=%d,y=%d,x=%d), records=%d, final
         nt, ny, nx, numRecords, errorCurve(end));
 fprintf("power drift: full=%.6e, linear=%.6e\n", powerDriftFull, powerDriftLinear);
 
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", ...
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", ...
                      "coupled_dispersion_nonlinearity_diffraction");
 if ~isfolder(outputDir)
     mkdir(outputDir);

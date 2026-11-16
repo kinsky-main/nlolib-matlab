@@ -1,7 +1,7 @@
 function epsilon = second_order_soliton_rk4ip()
 %SECOND_ORDER_SOLITON_RK4IP Second-order soliton analytical validation.
 
-repoRoot = setup_matlab_example_environment();
+setup_matlab_example_environment();
 
 beta2 = -0.01;
 gamma = 0.01;
@@ -83,7 +83,7 @@ if any(~isfinite(spectralMap), "all")
     error("spectral map contains non-finite values.");
 end
 
-outputDir = fullfile(repoRoot, "examples", "matlab", "output", "second_order_soliton");
+outputDir = fullfile(fileparts(mfilename("fullpath")), "output", "second_order_soliton");
 if ~isfolder(outputDir)
     mkdir(outputDir);
 end
