@@ -1336,6 +1336,9 @@ classdef NLolib < handle
                 root = roots{idx};
                 candidates{end + 1} = fullfile(root, 'lib', 'nlolib_matlab.h'); %#ok<AGROW>
                 candidates{end + 1} = fullfile(root, 'src', 'nlolib_matlab.h'); %#ok<AGROW>
+                % A standalone checkout of this repository keeps the core
+                % sources in ./core (tools/fetch_core.sh).
+                candidates{end + 1} = fullfile(root, 'core', 'src', 'nlolib_matlab.h'); %#ok<AGROW>
                 candidates{end + 1} = fullfile(root, 'build', 'matlab_toolbox', ...
                                                'lib', 'nlolib_matlab.h'); %#ok<AGROW>
             end
