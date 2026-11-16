@@ -159,14 +159,14 @@ frequency grid from a preset and the pulse; the low-level form passes a flat
 config struct through to the C API essentially untouched. Start high-level;
 drop to the low-level form when you need to pin solver parameters or use
 runtime features the facade does not expose (Raman, explicit `wt`/`kx`/`ky`
-axes, split `linear_factor_expr`/`linear_expr` operators).
+axes, split `linear_factor_fn`/`linear_fn` operators).
 
 <a name="quickstart"></a>
 
 ## Quick Start
 
-A chirped Gaussian in a purely dispersive medium, using the built-in operator
-presets:
+A chirped Gaussian in a dispersive Kerr medium. Both operators are function
+handles; the scalars they use are captured from the workspace:
 
 ```matlab
 api = nlolib.NLolib();
@@ -179,32 +179,12 @@ pulse = struct();
 pulse.samples    = exp(-(t / 0.25).^2) .* exp(-1i * 8.0 * t);
 pulse.delta_time = dt;
 
-options = struct();
-options.propagation_distance = 1.0;
-
-% "gvd" -> i*beta2*w^2 - loss, "kerr" -> i*gamma*A*|A|^2, with preset constants
-result = api.propagate(pulse, "gvd", "kerr", options);
-
-fprintf('%d records of %d samples\n', size(result.records));
-fprintf('power in=%.6e out=%.6e\n', ...
-        sum(abs(pulse.samples).^2), sum(abs(result.final).^2));
-```
-
-The same run with explicit physical coefficients — the usual starting point for
-real work:
-
-```matlab
 beta2 = -0.01;    % GVD  [ps^2/m]
 gamma = 0.01;     % Kerr [1/W/m]
-alpha = 0.0;      % amplitude loss [1/m]
+alpha = 0.0;      % power loss [1/m]
 
-linearOperator = struct( ...
-    'expr',   "i*beta2*w*w - loss", ...
-    'params', struct('beta2', 0.5 * beta2, 'loss', 0.5 * alpha));
-
-nonlinearOperator = struct( ...
-    'expr',   "i*A*(gamma*I + V)", ...
-    'params', struct('gamma', gamma));
+linearOperator    = @(A, w) 1i * (beta2 / 2) * w.^2 - alpha / 2;
+nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
 options = struct();
 options.propagation_distance = 0.506;
@@ -212,12 +192,15 @@ options.records              = 160;
 options.preset               = "balanced";
 
 result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+
+fprintf('%d records of %d samples\n', size(result.records));
+fprintf('power in=%.6e out=%.6e\n', ...
+        sum(abs(pulse.samples).^2), sum(abs(result.final).^2));
 ```
 
 Note the factors of one half: the solver applies \f$D(\omega)\f$ as written, so
-the GLSE term \f$i(\beta_2/2)\partial_t^2\f$ maps to `beta2 -> beta2/2`, and a
-power-loss coefficient \f$\alpha_{\mathrm{pow}}\f$ maps to
-`loss -> alpha_pow/2`. See [Runtime Operator
+the GLSE term \f$i(\beta_2/2)\partial_t^2\f$ is written `(beta2 / 2)`, and a
+power-loss coefficient \f$\alpha_{\mathrm{pow}}\f$ enters as `- alpha / 2`. See [Runtime Operator
 Mathematics](../../docs/runtime_operators.md).
 
 <a name="pulse"></a>
@@ -256,96 +239,57 @@ plotting or spectral post-processing.
 
 ## Describing the Operators
 
-Both operator arguments accept a preset name, an expression struct, or a
-function handle struct.
+Both operator arguments are function handles. The handle body must be a
+single expression in the runtime symbols; the wrapper lowers it to the
+library's runtime expression when the run starts. Strings, presets and the
+older `struct('expr', ...)` / `struct('fn', ...)` forms are not accepted:
+strings raise `nlolib:stringOperatorRemoved`, anything else that is not a
+function handle `nlolib:invalidOperatorSpec`.
 
-### Presets
-
-| Argument | Preset | Expression | Default params |
-|---|---|---|---|
-| linear | `"gvd"`, `"default"` | `i*beta2*w*w-loss` | `beta2 = -0.5`, `loss = 0` |
-| linear | `"none"` | `0` | — |
-| nonlinear | `"kerr"`, `"default"` | `i*gamma*A*I` | `gamma = 1.0` |
-| nonlinear | `"none"` | `0` | — |
-
-A preset name may be overridden by supplying `params` alongside it, and any
-string that is not a known preset is taken as a literal expression:
-
-```matlab
-linearOperator = struct('expr', "gvd", 'params', struct('beta2', -0.005, 'loss', 0.0));
-```
-
-### Expression operators
-
-`expr` is compiled by the runtime expression compiler. Available symbols:
-
-| Symbol | Meaning | Valid in |
-|---|---|---|
-| `A` | current field value | linear factor, nonlinear |
-| `I` | \f$\lvert A\rvert^2\f$ | nonlinear |
-| `V` | potential / auxiliary term | nonlinear |
-| `w` | temporal angular frequency | linear factor |
-| `wt`, `kx`, `ky` | tensor frequency axes | linear factor (tensor runs) |
-| `t`, `x`, `y` | tensor coordinate axes | linear factor (tensor runs) |
-| `i` | imaginary unit | everywhere |
-| `c0`, `c1`, ... | runtime constants | everywhere |
-| `exp`, `log`, `sqrt`, `sin`, `cos` | intrinsics | everywhere |
-
-`params` binds names to constants. Each named parameter is substituted for a
-`cN` token and appended to the runtime constant table; linear constants are
-allocated first, then nonlinear ones, so you never index `cN` by hand:
-
-```matlab
-% "i*beta2*w*w-loss" with params beta2, loss  ->  "i*c0*w*w-c1", constants [c0 c1]
-% "i*gamma*A*I"      with params gamma        ->  "i*c2*A*I",    constants [... c2]
-```
-
-`params` may also be a plain numeric vector, in which case the expression must
-already reference `c0`, `c1`, ... directly. The table holds at most 16
-constants (`RUNTIME_OPERATOR_CONSTANTS_MAX`); exceeding that raises
-`nlolib:tooManyRuntimeConstants`.
-
-### Function-handle operators
-
-Supply `fn` instead of `expr` and the handle is translated to an expression by
-`nlolib.translate_runtime_handle`. Argument positions determine the symbol
-binding:
-
-| Context | Handle signature |
+| Operator | Signature |
 |---|---|
-| linear (dispersion factor) | `@(A, w)` — one or two arguments |
-| nonlinear | `@(A, I, V)` — one to three arguments |
-| dispersion (low-level `dispersion_fn`) | `@(A, D, h, w)` — one to four arguments |
+| linear, \f$D\f$ applied as \f$\exp(hD)\f$ | `@(A, w, wt, kx, ky, x, y, t)` |
+| nonlinear, \f$N(A)\f$ | `@(A, I, V)` |
+
+| Symbol | Meaning |
+|---|---|
+| `A` | current field value |
+| `I` | \f$\lvert A\rvert^2\f$ |
+| `V` | the `potential_grid` value |
+| `w` | temporal angular frequency |
+| `wt`, `kx`, `ky` | tensor frequency axes (tensor runs) |
+| `t`, `x`, `y` | tensor coordinate axes (tensor runs) |
+| `exp`, `log`, `sqrt`, `sin`, `cos` | intrinsics |
+
+An argument named after a symbol binds to that symbol, in any position; any
+other name binds to the next unused symbol in the order shown, so
+`@(field, omega)` is `@(A, w)`. Declare only what you use:
 
 ```matlab
 beta2 = 0.05;
-linearOperator = struct('fn', @(A, w) 1i * (beta2 / 2.0) * (w .* w));
+gamma = 0.01;
+linearOperator    = @(A, w) 1i * (beta2 / 2.0) * (w .* w);
+nonlinearOperator = @(A, I) 1i * gamma * A .* I;
 ```
 
 Rules that matter in practice:
 
 - Element-wise operators are normalised (`.*` → `*`, `.^` → `^`, `./` → `/`),
-  and `1i`/`1j` literals become `i`. The body must still be a single
-  expression — no statements, no branching, no calls beyond the intrinsics
-  above.
-- Any identifier that is not a reserved symbol is captured from the handle's
-  closure as a real scalar constant (here, `beta2`). A captured value that is
-  non-scalar, complex, or non-finite is an error.
+  and imaginary literals (`1i`, `0.5j`) become multiples of `i`. The body must
+  be a single expression — no statements, no branching, no calls beyond the
+  intrinsics above.
+- Any other identifier is captured from the handle's workspace as a real
+  scalar constant (here, `beta2` and `gamma`). A captured value that is
+  non-scalar, complex, or non-finite is an error, and so is a struct field:
+  copy `cfg.gamma` into a local `gamma` before writing the handle.
 - Pin values explicitly with `runtime.constant_bindings` (a struct or
   `containers.Map`), or disable capture with
   `runtime.auto_capture_constants = false`, in the low-level config.
-- `expr` and `fn` are mutually exclusive on the same operator, and `params` is
-  not supported alongside `fn`.
-
-You can inspect the translation directly, which is the fastest way to debug a
-handle:
-
-```matlab
-[expr, constants] = nlolib.translate_runtime_handle( ...
-    @(A, w) 1i * (beta2 / 2.0) * (w .* w), "dispersion_factor");
-% expr      = 'i*(c0/2.0)*(w*w)'
-% constants = [0.05]
-```
+- The two operators together may capture at most 16 constants
+  (`RUNTIME_OPERATOR_CONSTANTS_MAX`); exceeding that raises
+  `nlolib:tooManyRuntimeConstants`.
+- With `nonlinear_model = NONLINEAR_MODEL_KERR_RAMAN` the nonlinear handle is
+  ignored; pass `@(A) 0`.
 
 <a name="options"></a>
 
@@ -360,7 +304,7 @@ handle:
 | `records` | from preset | number of \f$z\f$ samples to record |
 | `output` | `"dense"` | `"final"` forces `records = 1` |
 | `t_eval` | none | explicit \f$z\f$ positions to record at; sets the record count, so `records` is ignored when given |
-| `nonlinear_model` | `NONLINEAR_MODEL_EXPR` | `NONLINEAR_MODEL_KERR_RAMAN` selects the compiled Kerr+Raman model instead of the nonlinear expression |
+| `nonlinear_model` | `NONLINEAR_MODEL_EXPR` | `NONLINEAR_MODEL_KERR_RAMAN` selects the compiled Kerr+Raman model instead of the nonlinear handle |
 | `nonlinear_gamma` | `0.0` | Kerr coefficient for the built-in model |
 | `raman_fraction` | `0.0` | fractional Raman contribution |
 | `raman_tau1`, `raman_tau2` | `0.0122`, `0.0320` | Raman response time constants |
@@ -376,7 +320,7 @@ returned `result.z_axis` is then the list you asked for rather than a linspace:
 ```matlab
 options.propagation_distance = 0.05;
 options.t_eval               = [0.0, 0.005, 0.02, 0.05];
-result = api.propagate(pulse, "gvd", "kerr", options);   % 4 records
+result = api.propagate(pulse, linearOperator, nonlinearOperator, options);   % 4 records
 ```
 
 The nonlinear-model fields are the same ones the low-level `runtime`
@@ -525,9 +469,9 @@ pulse.pulse_period   = 1.0;                      % unused when tensor_nt == 1
 pulse.frequency_grid = complex(0.0, 0.0);        % one entry per tensor_nt
 pulse.potential_grid = reshape(complex(potential, 0), 1, []);
 
-linearOperator    = struct('expr',   "i*beta_t*(kx*kx + ky*ky)", ...
-                           'params', struct('beta_t', -1.0 / (2.0 * k0)));
-nonlinearOperator = struct('expr', "i*A*V");     % consume the potential only
+betaT = -1.0 / (2.0 * k0);
+linearOperator    = @(A, w, wt, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
+nonlinearOperator = @(A, I, V) 1i * A .* V;      % consume the potential only
 
 result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
 
@@ -561,9 +505,9 @@ pulse.delta_x        = dx;
 pulse.delta_y        = dy;
 pulse.frequency_grid = complex(omega, zeros(1, nt));   % one entry per tensor_nt
 
-linearOperator = struct( ...
-    'expr',   "i*(b2*wt*wt + bt*(kx*kx + ky*ky))", ...
-    'params', struct('b2', 0.5 * beta2, 'bt', -1.0 / (2.0 * k0)));
+b2 = 0.5 * beta2;
+bt = -1.0 / (2.0 * k0);
+linearOperator = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2));
 ```
 
 Note that the temporal symbol is `wt`, not `w`, once the run is a tensor run.
@@ -621,19 +565,20 @@ is what tells the library to generate the axes itself — do not pass `[]` to
 
 | Field | Meaning |
 |---|---|
-| `dispersion_factor_expr` / `dispersion_factor_fn` | \f$D\f$, applied as \f$\exp(hD)\f$ |
-| `dispersion_expr` / `dispersion_fn` | full dispersion operator |
-| `linear_factor_expr`, `linear_expr` | split linear operator form |
-| `potential_expr` | potential term |
-| `nonlinear_expr` / `nonlinear_fn` | \f$N(A)\f$ |
-| `constants` | scalar constant table, at most 16 entries |
-| `constant_bindings` | explicit name → value map for handle translation |
+| `dispersion_factor_fn` | \f$D\f$, applied as \f$\exp(hD)\f$: `@(A, w, wt, kx, ky, x, y, t)` |
+| `dispersion_fn` | full dispersion operator: `@(A, D, h, w, wt, kx, ky, x, y, t, V)` |
+| `linear_factor_fn`, `linear_fn` | split tensor linear operator: `@(A, wt, kx, ky, x, y, t)`, `@(A, D, h, wt, kx, ky, x, y, t, V)` |
+| `potential_fn` | potential term: `@(x, y, t, wt, kx, ky)` |
+| `nonlinear_fn` | \f$N(A)\f$: `@(A, I, V)` |
+| `constant_bindings` | explicit name → value map for the handles |
 | `auto_capture_constants` | set `false` to reject closure capture |
 | `nonlinear_model` | `0` expression model, Kerr+Raman selector otherwise |
 | `nonlinear_gamma`, `raman_fraction`, `raman_tau1`, `raman_tau2`, `shock_omega0` | built-in Kerr+Raman parameters |
 | `raman_response_time` | explicit complex Raman response samples |
 
-`num_constants` is derived from `numel(runtime.constants)`; do not set it.
+Every operator is a function handle, bound as described under
+[Describing the Operators](#operators). The string fields `*_expr` have been
+removed and raise `nlolib:stringOperatorRemoved`.
 
 ```matlab
 beta2 = -0.02;  alpha = 0.10;  gamma = 1.20;
@@ -649,9 +594,8 @@ cfg.delta_time           = dt;
 cfg.pulse_period         = n * dt;
 cfg.frequency_grid       = complex(omega, zeros(1, n));
 cfg.runtime = struct( ...
-    'dispersion_factor_expr', "i*c0*w*w-c1", ...
-    'nonlinear_expr',         "i*c2*A*I", ...
-    'constants',              [0.5 * beta2, 0.5 * alpha, gamma]);
+    'dispersion_factor_fn', @(A, w) 1i * (0.5 * beta2) * w.^2 - 0.5 * alpha, ...
+    'nonlinear_fn',         @(A, I) 1i * gamma * A .* I);
 
 result = api.propagate(cfg, field0, 128, struct('backend_type', 2));
 ```
@@ -847,16 +791,18 @@ back from the database.
 | `nlolib:simConfigTypeUnavailable` | stale or duplicate parsed type table | `nlolib.NLolib.unload(); clear classes;` then confirm only one `nlolib` package is on the path |
 | `nlolib:inputFieldLengthMismatch` | `cfg.num_time_samples ~= numel(inputField)` | for tensor runs set it to `nt*nx*ny` |
 | `nlolib:invalidPulseSpec` | bad shape or missing `samples`/`delta_time` | `numel(samples)` must equal `tensor_nt*tensor_nx*tensor_ny` |
-| `nlolib:invalidOperatorSpec` | both `expr` and `fn`, `params` with `fn`, or an unknown preset | pick one form; a non-preset string is used verbatim as an expression |
-| `nlolib:tooManyRuntimeConstants` | more than 16 constants | fold constants together in the expression |
+| `nlolib:stringOperatorRemoved` | an operator given as a string, or a `cfg.runtime.*_expr` field | pass a function handle, e.g. `@(A, w) 1i * beta2 * w.^2`; use the `*_fn` fields |
+| `nlolib:invalidOperatorSpec` | an operator that is not a function handle, or a handle the wrapper cannot lower | see [Describing the Operators](#operators) |
+| `nlolib:tooManyRuntimeConstants` | more than 16 captured constants | fold constants together into fewer workspace scalars |
 | `nlolib:propagateFailed` | the C call returned non-OK | rerun with `exec_options.matlab_stream_logs = true` and `set_log_level(3)` |
 | `nlolib:legacyApiRemoved` | `time_nt`/`spatial_nx`/`spatial_ny`/`transverse_*` | migrate to `tensor_nt`/`tensor_nx`/`tensor_ny` and encode diffraction in the linear operator |
 | `nlolib:storageUnavailable` | library built without SQLite | check `api.storage_is_available()` |
 | `nlolib:logUnavailable`, `nlolib:perfProfileUnavailable` | entry point absent in this build | guard optional calls |
 
-`unknown identifier '<name>' in runtime handle` means a handle referenced a
-variable that is neither a reserved symbol nor a real scalar in its closure —
-bind it through `runtime.constant_bindings`, or switch to `expr` with `params`.
+`unknown identifier '<name>' in <context> handle` means a handle referenced a
+variable that is neither a runtime symbol nor a real scalar in its workspace —
+define it before creating the handle, or bind it through
+`runtime.constant_bindings`.
 
 When a run misbehaves numerically rather than failing, the usual sequence is:
 tighten `preset` to `"accuracy"`, enable `capture_step_history` and look for the
@@ -876,7 +822,7 @@ plotting helpers.
 | [`standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m) | transverse x-y run, potential grid, analytical centroid check |
 | [`standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m) | full 3+1D Kerr propagation against Gaussian beam/pulse laws |
 | [`grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m) | 3+1D higher-order soliton fission and dispersive wave in a GRIN fibre |
-| [`runtime_temporal_demo.m`](../examples/runtime_temporal_demo.m) | function-handle linear operator, log buffer, progress options |
+| [`runtime_temporal_demo.m`](../examples/runtime_temporal_demo.m) | log buffer and progress options |
 | [`second_order_soliton_rk4ip.m`](../examples/second_order_soliton_rk4ip.m) | analytical soliton validation with step-history telemetry |
 | [`linear_drift_rk4ip.m`](../examples/linear_drift_rk4ip.m) | purely dispersive drift with an analytical reference |
 | [`runtime_callable_operator_rk4ip.m`](../examples/runtime_callable_operator_rk4ip.m) | callable runtime operators end to end |

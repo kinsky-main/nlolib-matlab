@@ -15,12 +15,9 @@ pulse.delta_time = dt;
 pulse.pulse_period = n * dt;
 pulse.frequency_grid = complex(omega, zeros(size(omega)));
 
-linearOperator = struct();
-linearOperator.fn = @(A, w) 1i * (beta2 / 2.0) * (w .* w);
-
-nonlinearOperator = struct();
-nonlinearOperator.expr = "i*A*(gamma*I + V)";
-nonlinearOperator.params = struct('gamma', 0.01);
+gamma = 0.01;
+linearOperator = @(A, w) 1i * (beta2 / 2.0) * (w .* w);
+nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
 api = nlolib.NLolib();
 api.set_log_buffer(uint64(256 * 1024));

@@ -4,7 +4,7 @@ function [simCfgPtr, physicsCfgPtr, keepalive] = prepare_sim_config(cfg)
 %
 %   cfg is a flat MATLAB struct with fields matching the nlolib C API.
 %   Returns a libstruct('sim_config', ...) and a keepalive cell array for
-%   pointer-backed fields (complex arrays and c-strings).
+%   pointer-backed fields (complex arrays and lowered operator strings).
 %
 %   Required fields:
 %     num_time_samples, propagation_distance, starting_step_size,
@@ -21,6 +21,20 @@ function [simCfgPtr, physicsCfgPtr, keepalive] = prepare_sim_config(cfg)
 %   kx_axis, and ky_axis are left unset unless supplied, which is what tells
 %   the library to generate those axes itself.
 %
+%   cfg.runtime takes the operators as function handles only:
+%     dispersion_factor_fn  @(A, w, wt, kx, ky, x, y, t)   D, applied as exp(h*D)
+%     dispersion_fn         @(A, D, h, w, wt, kx, ky, x, y, t, V)
+%     linear_factor_fn      @(A, wt, kx, ky, x, y, t)      tensor-run D
+%     linear_fn             @(A, D, h, wt, kx, ky, x, y, t, V)
+%     potential_fn          @(x, y, t, wt, kx, ky)
+%     nonlinear_fn          @(A, I, V)
+%   An argument named after a symbol binds to it; other names bind in the
+%   order shown.  Scalars the handle captures become runtime constants.
+%   The built-in model fields (nonlinear_model, nonlinear_gamma,
+%   raman_fraction, raman_tau1, raman_tau2, shock_omega0,
+%   raman_response_time) are read from cfg.runtime too.  The string fields
+%   (*_expr) have been removed and raise nlolib:stringOperatorRemoved.
+%
 %   Example:
 %     cfg = struct( ...
 %         'num_time_samples',     n, ...
@@ -33,15 +47,14 @@ function [simCfgPtr, physicsCfgPtr, keepalive] = prepare_sim_config(cfg)
 %         'pulse_period',         n * dt, ...
 %         'frequency_grid',       complex(omega, zeros(1, n)));
 %     cfg.runtime = struct( ...
-%         'dispersion_factor_expr', "i*c0*w*w-c1", ...
-%         'nonlinear_expr',         "i*c2*A*I", ...
-%         'constants',              [0.5 * beta2, 0.5 * alpha, gamma]);
+%         'dispersion_factor_fn', @(A, w) 1i * (0.5 * beta2) * w.^2 - 0.5 * alpha, ...
+%         'nonlinear_fn',         @(A, I) 1i * gamma * A .* I);
 %     [simCfgPtr, physicsCfgPtr, keepalive] = nlolib.prepare_sim_config(cfg);
 %
 %   keepalive must stay in scope for as long as the returned pointers are
 %   used, or MATLAB frees the buffers underneath the library.
 %
-%   See also NLOLIB.NLOLIB/PROPAGATE, NLOLIB.TRANSLATE_RUNTIME_HANDLE.
+%   See also NLOLIB.NLOLIB/PROPAGATE.
 if ~isstruct(cfg)
     error("cfg must be a struct");
 end
@@ -285,52 +298,42 @@ for idx = 1:numel(legacyRuntimeFields)
     key = legacyRuntimeFields{idx};
     if isfield(runtime, key) && ~isempty(runtime.(key))
         error('nlolib:legacyApiRemoved', ...
-              'cfg.runtime.%s has been removed; encode diffraction in linear_factor_expr/linear_expr.', key);
+              'cfg.runtime.%s has been removed; encode diffraction in linear_factor_fn/linear_fn.', key);
+    end
+end
+stringFields = {"linear_factor_expr", "linear_expr", "potential_expr", ...
+                "dispersion_factor_expr", "dispersion_expr", "nonlinear_expr"};
+for idx = 1:numel(stringFields)
+    key = stringFields{idx};
+    if isfield(runtime, key)
+        error('nlolib:stringOperatorRemoved', ...
+              ['cfg.runtime.%s has been removed; operators are function handles ' ...
+               'only. Use cfg.runtime.%s_fn instead.'], key, extractBefore(key, "_expr"));
     end
 end
 if isfield(runtime, "constants") && ~isempty(runtime.constants)
     constants = double(runtime.constants(:).');
 end
 
-if isfield(runtime, "linear_factor_expr") && ~isempty(runtime.linear_factor_expr)
-    linearFactorExpr = string(runtime.linear_factor_expr);
+% Each operator handle is lowered to the expression string the C API takes,
+% with its captured constants appended after those already collected.
+handleFields = { ...
+    "linear_factor_fn",     "linear_factor"; ...
+    "linear_fn",            "linear"; ...
+    "potential_fn",         "potential"; ...
+    "dispersion_factor_fn", "dispersion_factor"; ...
+    "dispersion_fn",        "dispersion"; ...
+    "nonlinear_fn",         "nonlinear"};
+lowered = repmat({""}, 1, size(handleFields, 1));
+for idx = 1:size(handleFields, 1)
+    key = handleFields{idx, 1};
+    if isfield(runtime, key) && ~isempty(runtime.(key))
+        [translated, captured] = translate_runtime_handle(runtime.(key), handleFields{idx, 2}, runtime);
+        lowered{idx} = string(shift_constant_indices(translated, numel(constants)));
+        constants = [constants, captured]; %#ok<AGROW>
+    end
 end
-if isfield(runtime, "linear_expr") && ~isempty(runtime.linear_expr)
-    linearExpr = string(runtime.linear_expr);
-end
-if isfield(runtime, "potential_expr") && ~isempty(runtime.potential_expr)
-    potentialExpr = string(runtime.potential_expr);
-end
-if isfield(runtime, "dispersion_factor_expr") && ~isempty(runtime.dispersion_factor_expr)
-    dispersionFactorExpr = string(runtime.dispersion_factor_expr);
-end
-if isfield(runtime, "dispersion_expr") && ~isempty(runtime.dispersion_expr)
-    dispersionExpr = string(runtime.dispersion_expr);
-end
-if isfield(runtime, "nonlinear_expr") && ~isempty(runtime.nonlinear_expr)
-    nonlinearExpr = string(runtime.nonlinear_expr);
-end
-
-if isfield(runtime, "dispersion_factor_fn") && ~isempty(runtime.dispersion_factor_fn)
-    [translated, captured] = nlolib.translate_runtime_handle(runtime.dispersion_factor_fn, "dispersion_factor", runtime);
-    translated = shift_constant_indices(translated, numel(constants));
-    constants = [constants, captured];
-    dispersionFactorExpr = translated;
-end
-
-if isfield(runtime, "dispersion_fn") && ~isempty(runtime.dispersion_fn)
-    [translated, captured] = nlolib.translate_runtime_handle(runtime.dispersion_fn, "dispersion", runtime);
-    translated = shift_constant_indices(translated, numel(constants));
-    constants = [constants, captured];
-    dispersionExpr = translated;
-end
-
-if isfield(runtime, "nonlinear_fn") && ~isempty(runtime.nonlinear_fn)
-    [translated, captured] = nlolib.translate_runtime_handle(runtime.nonlinear_fn, "nonlinear", runtime);
-    translated = shift_constant_indices(translated, numel(constants));
-    constants = [constants, captured];
-    nonlinearExpr = translated;
-end
+[linearFactorExpr, linearExpr, potentialExpr, dispersionFactorExpr, dispersionExpr, nonlinearExpr] = lowered{:};
 end
 
 function shifted = shift_constant_indices(expr, offset)

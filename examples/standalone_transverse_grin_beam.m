@@ -13,7 +13,7 @@
 %   with beta_t = -1/(2k) (diffraction) and V = -(k*g^2/2)*(x^2 + y^2) (the
 %   GRIN lens).  The linear term is applied in the transverse Fourier domain
 %   by the runtime operator; V is supplied as a potential grid and consumed
-%   by the nonlinear expression "i*A*V".
+%   by the nonlinear operator @(A, I, V) 1i * A .* V.
 %
 %   Launching a width-matched Gaussian at rest off-axis gives a beam that
 %   oscillates rigidly about the axis with pitch period 2*pi/g, so the
@@ -78,11 +78,8 @@ pulse.pulse_period   = 1.0;                      % unused when tensor_nt == 1
 pulse.frequency_grid = complex(0.0, 0.0);        % one entry per tensor_nt
 pulse.potential_grid = flatten(complex(potential, zeros(size(potential))));
 
-linearOperator = struct( ...
-    'expr',   "i*beta_t*(kx*kx + ky*ky)", ...
-    'params', struct('beta_t', betaT));
-
-nonlinearOperator = struct('expr', "i*A*V");     % GRIN potential only, no Kerr
+linearOperator    = @(A, w, wt, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
+nonlinearOperator = @(A, I, V) 1i * A .* V;       % GRIN potential only, no Kerr
 
 options = struct();
 options.propagation_distance = zFinal;

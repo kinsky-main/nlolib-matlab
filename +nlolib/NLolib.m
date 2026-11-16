@@ -37,12 +37,10 @@ classdef NLolib < handle
     %         'samples',    exp(-(t / 0.25) .^ 2) .* exp(-1i * 8.0 * t), ...
     %         'delta_time', dt);
     %
-    %     linearOperator = struct( ...
-    %         'expr',   "i*beta2*w*w - loss", ...
-    %         'params', struct('beta2', -0.005, 'loss', 0.0));
-    %     nonlinearOperator = struct( ...
-    %         'expr',   "i*gamma*A*I", ...
-    %         'params', struct('gamma', 0.01));
+    %     beta2 = -0.005;
+    %     gamma = 0.01;
+    %     linearOperator    = @(A, w) 1i * beta2 * w.^2;
+    %     nonlinearOperator = @(A, I) 1i * gamma * A .* I;
     %
     %     options = struct( ...
     %         'propagation_distance', 1.0, ...
@@ -67,7 +65,7 @@ classdef NLolib < handle
     %     SQLite storage, and a troubleshooting table.
     %
     %   See also NLOLIB.NLOLIB/PROPAGATE, NLOLIB.NLOLIB/QUERY_RUNTIME_LIMITS,
-    %   NLOLIB.TRANSLATE_RUNTIME_HANDLE, NLOLIB.PREPARE_SIM_CONFIG.
+    %   NLOLIB.PREPARE_SIM_CONFIG.
 
     properties (Constant, Access = private)
         LIBNAME = 'nlolib';
@@ -154,14 +152,18 @@ classdef NLolib < handle
             %     potential_grid         - optional complex potential V
             %
             %   OPERATORS (high-level)
-            %     A preset string ("gvd", "kerr", "none"), a struct with
-            %     'expr' and optional 'params', or a struct with a function
-            %     handle 'fn'.  Named params are substituted for c0, c1, ...
-            %     in expression order, linear constants first.
+            %     Function handles only; strings raise
+            %     nlolib:stringOperatorRemoved.  The body must be a single
+            %     expression in the runtime symbols; scalars it captures
+            %     from the workspace become runtime constants.
+            %       linearOp     @(A, w, wt, kx, ky, x, y, t)  D, applied as exp(h*D)
+            %       nonlinearOp  @(A, I, V)                    N(A), I = |A|^2
+            %     An argument named after a symbol binds to it; other names
+            %     bind in the order shown.
             %
-            %       linearOp    = struct('expr', "i*beta2*w*w - loss", ...
-            %                            'params', struct('beta2', -0.005, 'loss', 0.0));
-            %       nonlinearOp = struct('fn', @(A, I, V) 1i * A * (0.01 * I + V));
+            %       linearOp    = @(A, w) 1i * beta2 * w.^2 - loss;
+            %       nonlinearOp = @(A, I, V) 1i * A .* (gamma * I + V);
+            %       linearOp3d  = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2));
             %
             %   OPTIONS (high-level)
             %     propagation_distance - required, > 0
@@ -179,8 +181,9 @@ classdef NLolib < handle
             %     storage              - SQLite storage options struct
             %
             %   BUILT-IN NONLINEAR MODEL (high-level)
-            %     Set these to use the compiled Kerr+Raman model instead of a
-            %     nonlinear expression. See nlolib.constants for the values.
+            %     Set these to use the compiled Kerr+Raman model instead of
+            %     the nonlinearOp handle, which is then ignored (pass
+            %     @(A) 0). See nlolib.constants for the values.
             %     nonlinear_model      - NONLINEAR_MODEL_EXPR (default) or
             %                            NONLINEAR_MODEL_KERR_RAMAN
             %     nonlinear_gamma      - Kerr coefficient
@@ -227,22 +230,11 @@ classdef NLolib < handle
             end
 
             if nlolib.NLolib.looks_like_pulse_spec(primary)
-                linearOperator = "gvd";
-                nonlinearOperator = "kerr";
-                options = struct();
-                if numel(varargin) >= 1
-                    linearOperator = varargin{1};
-                end
-                if numel(varargin) >= 2
-                    nonlinearOperator = varargin{2};
-                end
-                if numel(varargin) >= 3
-                    options = varargin{3};
-                end
-                if numel(varargin) > 3
+                if numel(varargin) ~= 3
                     error('nlolib:invalidPropagateCall', ...
-                          'high-level propagate accepts at most 3 trailing arguments');
+                          'high-level propagate is propagate(pulse, linearOp, nonlinearOp, options)');
                 end
+                [linearOperator, nonlinearOperator, options] = varargin{:};
                 [cfg, inputField, numRecordedSamples, execOptions, zAxis, meta] = ...
                     nlolib.NLolib.build_simulation_request(primary, linearOperator, nonlinearOperator, options);
 
@@ -1825,26 +1817,12 @@ classdef NLolib < handle
                 nlolib.NLolib.validate_coupled_pulse_spec(pulseSpec);
             end
 
-            [linearExpr, linearFn, linearConstants] = ...
-                nlolib.NLolib.resolve_operator_spec('linear', linearOperator, 0);
-            [nonlinearExpr, nonlinearFn, nonlinearConstants] = ...
-                nlolib.NLolib.resolve_operator_spec('nonlinear', nonlinearOperator, ...
-                                                    numel(linearConstants));
-
+            % prepare_sim_config lowers the handles to the C expressions.
             runtime = struct();
-            if strlength(linearExpr) > 0
-                runtime.dispersion_factor_expr = char(linearExpr);
-            end
-            if ~isempty(linearFn)
-                runtime.dispersion_factor_fn = linearFn;
-            end
-            if strlength(nonlinearExpr) > 0
-                runtime.nonlinear_expr = char(nonlinearExpr);
-            end
-            if ~isempty(nonlinearFn)
-                runtime.nonlinear_fn = nonlinearFn;
-            end
-            runtime.constants = [linearConstants, nonlinearConstants];
+            runtime.dispersion_factor_fn = ...
+                nlolib.NLolib.require_operator_handle('linear', linearOperator);
+            runtime.nonlinear_fn = ...
+                nlolib.NLolib.require_operator_handle('nonlinear', nonlinearOperator);
 
             % Built-in nonlinear model parameters. prepare_sim_config already
             % reads these from cfg.runtime; before this they were reachable
@@ -2100,122 +2078,17 @@ classdef NLolib < handle
             omega = complex(omega, 0.0);
         end
 
-        function [expr, fn, constants] = resolve_operator_spec(context, operator, offset)
-            expr = "";
-            fn = [];
-            constants = [];
-
-            params = [];
+        function fn = require_operator_handle(context, operator)
             if ischar(operator) || isstring(operator)
-                expr = string(operator);
-            elseif isstruct(operator)
-                if isfield(operator, 'expr') && ~isempty(operator.expr)
-                    expr = string(operator.expr);
-                end
-                if isfield(operator, 'fn') && ~isempty(operator.fn)
-                    fn = operator.fn;
-                end
-                if isfield(operator, 'params') && ~isempty(operator.params)
-                    params = operator.params;
-                end
-            else
+                error('nlolib:stringOperatorRemoved', ...
+                      ['%s operator must be a function_handle; string expressions and ' ...
+                       'presets were removed. Pass e.g. @(A, w) 1i * beta2 * w.^2.'], context);
+            end
+            if ~isa(operator, 'function_handle')
                 error('nlolib:invalidOperatorSpec', ...
-                      '%s operator must be a preset string or struct', context);
+                      '%s operator must be a function_handle, got %s.', context, class(operator));
             end
-
-            if strlength(expr) > 0 && ~isempty(fn)
-                error('nlolib:invalidOperatorSpec', ...
-                      '%s operator cannot define both expr and fn', context);
-            end
-
-            if strlength(expr) > 0 && isempty(fn)
-                [presetExpr, presetParams, isPreset] = nlolib.NLolib.operator_preset(context, expr);
-                if isPreset
-                    expr = presetExpr;
-                    if isempty(params)
-                        params = presetParams;
-                    end
-                end
-            end
-
-            if strlength(expr) == 0 && isempty(fn)
-                error('nlolib:invalidOperatorSpec', ...
-                      '%s operator must define expr/fn or a known preset', context);
-            end
-
-            if ~isempty(fn)
-                if ~isempty(params)
-                    error('nlolib:invalidOperatorSpec', ...
-                          '%s callable operator params are not supported in MATLAB facade', ...
-                          context);
-                end
-                return;
-            end
-
-            [expr, constants] = nlolib.NLolib.parameterize_expression(expr, params, offset);
-        end
-
-        function [expr, params, matched] = operator_preset(context, name)
-            matched = true;
-            params = [];
-            key = char(lower(string(name)));
-            switch char(lower(string(context)))
-                case 'linear'
-                    switch key
-                        case {'gvd', 'default'}
-                            expr = "i*beta2*w*w-loss";
-                            params = struct('beta2', -0.5, 'loss', 0.0);
-                        case 'none'
-                            expr = "0";
-                            params = struct();
-                        otherwise
-                            expr = string(name);
-                            matched = false;
-                    end
-                case 'nonlinear'
-                    switch key
-                        case {'kerr', 'default'}
-                            expr = "i*gamma*A*I";
-                            params = struct('gamma', 1.0);
-                        case 'none'
-                            expr = "0";
-                            params = struct();
-                        otherwise
-                            expr = string(name);
-                            matched = false;
-                    end
-                otherwise
-                    expr = string(name);
-                    matched = false;
-            end
-        end
-
-        function [expression, constants] = parameterize_expression(expressionInput, params, offset)
-            expression = string(expressionInput);
-            constants = [];
-            if isempty(params)
-                return;
-            end
-
-            if isnumeric(params)
-                constants = double(params(:).');
-                return;
-            end
-
-            if ~isstruct(params)
-                error('nlolib:invalidOperatorSpec', ...
-                      'operator params must be numeric or struct');
-            end
-
-            names = fieldnames(params);
-            constants = zeros(1, numel(names));
-            for idx = 1:numel(names)
-                key = names{idx};
-                constants(idx) = double(params.(key));
-                token = sprintf('c%d', offset + idx - 1);
-                pattern = ['(?<![A-Za-z0-9_])' regexptranslate('escape', key) '(?![A-Za-z0-9_])'];
-                expression = regexprep(expression, pattern, token);
-            end
+            fn = operator;
         end
 
         function roots = resolve_roots()

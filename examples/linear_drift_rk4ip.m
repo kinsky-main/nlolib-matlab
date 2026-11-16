@@ -21,13 +21,9 @@ pulse.delta_time = dt;
 pulse.pulse_period = numSamples * dt;
 pulse.frequency_grid = complex(backend.angular_frequency_grid(numSamples, dt), zeros(1, numSamples));
 
-linearOperator = struct();
-linearOperator.expr = "i*beta2*w*w-loss";
-linearOperator.params = struct('beta2', 0.5 * beta2, 'loss', 0.0);
-
-nonlinearOperator = struct();
-nonlinearOperator.expr = "i*A*(gamma*I + V)";
-nonlinearOperator.params = struct('gamma', gamma);
+b2 = 0.5 * beta2;
+linearOperator = @(A, w) 1i * b2 * w.^2;
+nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
 api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
