@@ -106,5 +106,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Run the MATLAB-free checks
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^test_matlab_(binding_types|header_abi)$'
+
+      # The same script the test_matlab_bindings CTest case runs, started
+      # through the action instead: on a hosted runner MATLAB is only licensed
+      # when launched that way, so `matlab -batch` from ctest cannot start.
       - name: Run the MATLAB tests
-        run: ctest --test-dir build --build-config Release --output-on-failure -R '^test_matlab_'
+        uses: matlab-actions/run-command@v3
+        env:
+          NLOLIB_LIBRARY: ${{ github.workspace }}/build/src/libnlolib.so
+          NLOLIB_API_PARITY_MANIFEST: ${{ github.workspace }}/core/tests/api_parity.json
+        with:
+          command: run('tests/run_matlab_tests.m')
