@@ -146,18 +146,12 @@ program falling back. See [GPU backend behaviour](../../docs/gpu_backend.md).
 
 ## Examples
 
-Self-contained scripts that run against an installed toolbox:
-
-- [`examples/standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m)
-  — transverse x-y propagation with a GRIN potential grid.
-- [`examples/standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m)
-  — coupled 3+1D Kerr propagation validated against Gaussian beam/pulse laws.
-- [`examples/grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m)
-  — higher-order soliton fission in the fundamental mode of a GRIN fibre.
-
-Repo-helper examples (run `addpath('examples')` first) cover callable
-runtime operators, soliton and linear-drift validation, GRIN fibre transverse
-phase, and coupled dispersion/nonlinearity/diffraction. The full index is in the
+`examples/` holds the shared example set: twelve problems defined once in
+the core's `tests/api_surface.json` and implemented in each binding. Each file
+carries its numbers in a parameter block between the
+`nlolib-example-parameters: begin` and `end` comments, which the core's
+`tools/check_api_parity.py` compares with the manifest, and prints its metrics
+with `backend.report_metric` under the shared labels. The index is in the
 [user guide](user_guide.md#examples).
 
 ## Public API Entry Points

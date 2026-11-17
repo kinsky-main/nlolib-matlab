@@ -90,17 +90,11 @@ Anything but a function handle raises `nlolib:invalidOperator`.
 ## Examples
 
 The toolbox installs its examples; `nlolib_setup()` adds them to the path.
-These three are self-contained and run as they stand:
-
-- `standalone_transverse_grin_beam` — transverse x-y propagation with a GRIN
-  potential grid.
-- `standalone_spatiotemporal_kerr_bullet` — coupled 3+1D Kerr propagation
-  validated against Gaussian beam and pulse laws.
-- `grin_fiber_soliton_fission` — higher-order soliton fission in the
-  fundamental mode of a GRIN fibre.
-
-Further examples cover function-handle operators, soliton and linear-drift
-validation, and coupled dispersion, nonlinearity and diffraction.
+They are the twelve examples shared with the Python and Julia packages: the
+same problem, the same parameters and the same printed metrics in each. Run
+one by name, for example `quickstart` or `transverse_grin_beam`; plots go to
+`examples/output/<name>/`. The full list is in the
+[user guide](docs/user_guide.md#examples).
 
 ## CPU and GPU
 

@@ -453,7 +453,7 @@ The same potential can be written as an operator instead of a grid:
 `potential_operator=@(x, y) grinDepth * (x.^2 + y.^2)`, with `potential_grid`
 left out.
 
-See [`examples/matlab/standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m)
+See [`examples/matlab/transverse_grin_beam.m`](../examples/transverse_grin_beam.m)
 for the complete script, which checks the beam centroid against
 \f$x_0\cos(gz)\f$.
 
@@ -479,7 +479,7 @@ bt = -1.0 / (2.0 * k0);
 linearOperator = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2));
 ```
 
-Full script: [`examples/matlab/standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m).
+Full script: [`examples/matlab/spatiotemporal_kerr_bullet.m`](../examples/spatiotemporal_kerr_bullet.m).
 
 Each record comes back as one flat row of `nt*nx*ny` samples.
 `nlolib.tensor_record_view` reshapes one record into a volume indexed as
@@ -678,30 +678,37 @@ step size pinned at `min_step_size`, then check power/energy drift across
 
 ## Example Scripts
 
-The self-contained scripts run against an installed toolbox with no repo
-helpers; the rest use `setup_matlab_example_environment` and the `+backend`
-plotting helpers.
+The examples are the set shared with the Python and Julia packages: the same
+problem, parameters and printed metric labels in every binding. Each is a
+function that prints its metrics as `label: value` and returns them in a
+struct. They use `setup_matlab_example_environment` and the `+backend`
+helpers (grids, metrics, plots).
 
-| Script | Shows |
-|---|---|
-| [`standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m) | transverse x-y run, potential grid, analytical centroid check |
-| [`standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m) | full 3+1D Kerr propagation against Gaussian beam/pulse laws |
-| [`grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m) | 3+1D higher-order soliton fission and dispersive wave in a GRIN fibre |
-| [`runtime_temporal_demo.m`](../examples/runtime_temporal_demo.m) | log buffer and progress options |
-| [`second_order_soliton_rk4ip.m`](../examples/second_order_soliton_rk4ip.m) | analytical soliton validation with step-history telemetry |
-| [`linear_drift_rk4ip.m`](../examples/linear_drift_rk4ip.m) | purely dispersive drift with an analytical reference |
-| [`runtime_callable_operator_rk4ip.m`](../examples/runtime_callable_operator_rk4ip.m) | callable runtime operators end to end |
-| [`coupled_dispersion_nonlinearity_diffraction_rk4ip.m`](../examples/coupled_dispersion_nonlinearity_diffraction_rk4ip.m) | coupled 3+1D dispersion, nonlinearity, and diffraction |
-| [`grin_fiber_xy_rk4ip.m`](../examples/grin_fiber_xy_rk4ip.m) | GRIN transverse phase validation |
+| Script | Shows | Metrics |
+|---|---|---|
+| [`quickstart.m`](../examples/quickstart.m) | the shortest propagate call: a chirped Gaussian under dispersion | initial power, final power |
+| [`linear_drift.m`](../examples/linear_drift.m) | dispersive drift of a phase-ramped pulse against the exact linear solution | centroid slope relative error |
+| [`spm.m`](../examples/spm.m) | self-phase modulation against the closed-form phase | final mean pointwise relative error, power drift |
+| [`second_order_soliton.m`](../examples/second_order_soliton.m) | N = 2 soliton over one period, with step history | epsilon (relative L2 intensity error at z_final) |
+| [`conservation_checks.m`](../examples/conservation_checks.m) | energy, momentum and Hamiltonian of a lossless NLSE run | max energy / momentum / Hamiltonian drift |
+| [`raman_scattering.m`](../examples/raman_scattering.m) | built-in Kerr + Raman model, self-frequency shift against the moment equation | centroid-curve relative error vs prediction |
+| [`tensor_dispersion_3d.m`](../examples/tensor_dispersion_3d.m) | linear (t, x, y) run against the exact FFT-domain solution | final field relative error, power drift |
+| [`transverse_grin_beam.m`](../examples/transverse_grin_beam.m) | x-y run, potential grid, beam centroid against x0 cos(gz) | power drift, max centroid deviation |
+| [`spatiotemporal_kerr_bullet.m`](../examples/spatiotemporal_kerr_bullet.m) | 3+1D Gaussian packet, linear vs Kerr, against Gaussian spreading laws | width error, radius error, energy drift |
+| [`grin_soliton_fission.m`](../examples/grin_soliton_fission.m) | 4th-order soliton fission in a GRIN fibre | energy drift, peak power in/out (MW), accepted steps |
+| [`high_order_grin_soliton.m`](../examples/high_order_grin_soliton.m) | saturable nonlinearity, linear_step_operator, GRIN guidance | final radius / launch radius, min overlap fidelity, power drift |
+| [`sqlite_storage.m`](../examples/sqlite_storage.m) | return_records=false with SQLite storage, read back | records captured, chunks written, db size bytes |
 
 Run one from the repository with:
 
 ```matlab
-addpath('examples/matlab');
-runtime_temporal_demo
+addpath('examples');
+quickstart
 ```
 
-Plots are written under `examples/matlab/output/<example-name>/`.
+Plots are written under `examples/output/<example-name>/` (or the folder in
+`NLOLIB_EXAMPLE_OUTPUT`). The largest, `high_order_grin_soliton`, returns
+805 MB of records.
 
 ## Related Reference
 
