@@ -17,11 +17,8 @@ pulse.delta_time = dt;
 pulse.pulse_period = n * dt;
 pulse.frequency_grid = complex(backend.angular_frequency_grid(n, dt), zeros(1, n));
 
-linearOperator = struct();
-linearOperator.fn = @(A, w) i * scale .* (w .* w);
-
-nonlinearOperator = struct();
-nonlinearOperator.fn = @(A, I) 0 .* I;
+linearOperator = @(A, w) 1i * scale .* (w .* w);
+nonlinearOperator = @(A, I) 0 .* I;
 
 api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...

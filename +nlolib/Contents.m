@@ -13,9 +13,6 @@
 %   NLolib/set_progress_options - Progress bar behaviour.
 %   NLolib/perf_profile_read - Read runtime performance counters.
 %
-% Operator helpers
-%   translate_runtime_handle - Compile a function handle into a runtime expression.
-%
 % Named values
 %   constants                - C API enum values and limits, by name.
 %

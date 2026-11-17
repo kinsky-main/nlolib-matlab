@@ -72,13 +72,9 @@ pulse.delta_x = scenario.dx;
 pulse.delta_y = scenario.dy;
 pulse.potential_grid = flatten_xy(complex(phaseUnit, zeros(size(phaseUnit))));
 
-linearOperator = struct();
-linearOperator.expr = "i*beta2*w*w-loss";
-linearOperator.params = struct('beta2', 0.0, 'loss', 0.0);
-
-nonlinearOperator = struct();
-nonlinearOperator.expr = "i*A*(gamma*I + V)";
-nonlinearOperator.params = struct('gamma', 0.0);
+% Potential (GRIN phase) only: no dispersion, no Kerr.
+linearOperator = @(A, w) 0 * w;
+nonlinearOperator = @(A, I, V) 1i * A .* V;
 
 execOptions = backend.make_exec_options(simOptions, numRecords);
 propagateOptions = struct();
@@ -221,10 +217,9 @@ cfgTensor.delta_x = dx;
 cfgTensor.delta_y = dy;
 cfgTensor.frequency_grid = complex(0.0, 0.0);
 cfgTensor.runtime = struct( ...
-    'linear_factor_expr', "i*c0*(kx*kx + ky*ky)", ...
-    'linear_expr', "exp(h*D)", ...
-    'nonlinear_expr', "0", ...
-    'constants', diffractionCoeff);
+    'linear_factor_fn', @(A, wt, kx, ky) 1i * diffractionCoeff * (kx.^2 + ky.^2), ...
+    'linear_fn', @(A, D, h) exp(h .* D), ...
+    'nonlinear_fn', @(A) 0);
 
 tensorResult = api.propagate(cfgTensor, field0Flat, numRecords, execOptions);
 tensorRecords = unflatten_xy_records(tensorResult.records, numRecords, ny, nx);

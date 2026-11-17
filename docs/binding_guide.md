@@ -76,24 +76,23 @@ D(\omega)=i\left(\frac{\beta_2}{2}\right)\omega^2-\frac{\alpha}{2},
 N(A)=i\gamma A|A|^2
 \f]
 
-so the runtime constants are
-
-- `c0 = beta2 / 2`
-- `c1 = alpha / 2`
-- `c2 = gamma`
+written as function handles. The scalars the handles use are captured as
+runtime constants when the config is lowered:
 
 ```matlab
 beta2 = -0.02;
 alpha = 0.10;
 gamma = 1.20;
 
-cfg.runtime.dispersion_factor_expr = "i*c0*w*w-c1";
-cfg.runtime.nonlinear_expr = "i*c2*A*I";
-% num_constants is derived from numel(cfg.runtime.constants); do not set it.
-cfg.runtime.constants = [0.5 * beta2, 0.5 * alpha, gamma];
+cfg.runtime.dispersion_factor_fn = @(A, w) 1i * (beta2 / 2) * w.^2 - alpha / 2;
+cfg.runtime.nonlinear_fn         = @(A, I) 1i * gamma * A .* I;
 
 api = nlolib.NLolib();
 ```
+
+The C API takes operators as expression strings; `prepare_sim_config` lowers
+each handle to one privately (`+nlolib/private/translate_runtime_handle.m`).
+Strings are not accepted from users.
 
 ## Quick Start
 
@@ -109,10 +108,10 @@ pulse = struct( ...
     'samples',    exp(-(t / 0.25).^2) .* exp(-1i * 8.0 * t), ...
     'delta_time', dt);
 
-linearOperator = struct('expr',   "i*beta2*w*w - loss", ...
-                        'params', struct('beta2', -0.005, 'loss', 0.0));
-nonlinearOperator = struct('expr',   "i*gamma*A*I", ...
-                           'params', struct('gamma', 0.01));
+beta2 = -0.005;
+gamma = 0.01;
+linearOperator    = @(A, w) 1i * beta2 * w.^2;
+nonlinearOperator = @(A, I) 1i * gamma * A .* I;
 
 options = struct('propagation_distance', 1.0, ...
                  'records',              128, ...
@@ -178,7 +177,6 @@ phase, and coupled dispersion/nonlinearity/diffraction. The full index is in the
 | `nlolib.NLolib` | wrapper class: `propagate`, `query_runtime_limits`, logging, progress, perf counters, storage availability |
 | `nlolib.constants` | C API enum values and limits by name, matching the Python and Julia packages |
 | `nlolib.tensor_record_view` | coupled record row → `(nt, ny, nx)` volume |
-| `nlolib.translate_runtime_handle` | function handle → runtime expression plus captured constants |
 | `nlolib.prepare_sim_config` | MATLAB config struct → `simulation_config` / `runtime_operator_params` libstructs |
 | `nlolib.pack_complex_array` | complex vector → `nlo_complex*` buffer |
 | `nlolib.unpack_records` | `nlo_complex*` records → complex matrix |

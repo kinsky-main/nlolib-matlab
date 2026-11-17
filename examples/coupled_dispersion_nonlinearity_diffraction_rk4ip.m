@@ -197,13 +197,9 @@ pulse.delta_x = dx;
 pulse.delta_y = dy;
 pulse.potential_grid = flatten_potential_tyx(complex(potential, zeros(size(potential))), nt);
 
-linearOperator = struct();
-linearOperator.expr = "i*(beta2*wt*wt + beta_t*(kx*kx + ky*ky))";
-linearOperator.params = struct('beta2', 0.5 * beta2, 'beta_t', diffractionCoeff);
-
-nonlinearOperator = struct();
-nonlinearOperator.expr = "i*A*(gamma*I + V)";
-nonlinearOperator.params = struct('gamma', gamma);
+b2 = 0.5 * beta2;
+linearOperator = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + diffractionCoeff * (kx.^2 + ky.^2));
+nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
 execOptions = backend.make_exec_options(simOptions, numRecords);
 propagateOptions = struct();

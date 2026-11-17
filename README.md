@@ -3,8 +3,7 @@
 MATLAB toolbox for the nlolib nonlinear-optics runtime: a split-step (RK4IP)
 propagator for pulses and beams in nonlinear media, with a CPU backend and an
 optional Vulkan GPU backend. It supports temporal, transverse (x-y) and coupled
-3+1D propagation, with operators given as expression strings or MATLAB function
-handles.
+3+1D propagation, with operators given as MATLAB function handles.
 
 ## Install
 
@@ -23,32 +22,62 @@ platforms.
 
 ## Quick start
 
-A run needs a pulse, two operators and a propagation distance; the solver
-schedule comes from a preset.
+A run needs a pulse, a linear and a nonlinear operator, and a propagation
+distance. Operators are function handles; the scalars they use (`beta2`,
+`gamma` below) are captured when the run starts. This propagates a
+fundamental soliton, which keeps its shape:
 
 ```matlab
-n  = 512;
-dt = 0.02;
-t  = ((0:(n - 1)) - 0.5 * (n - 1)) * dt;
+n  = 1024;
+dt = 0.01;
+t  = ((0:(n - 1)) - n / 2) * dt;
 
-pulse = struct( ...
-    'samples',    exp(-(t / 0.25).^2) .* exp(-1i * 8.0 * t), ...
-    'delta_time', dt);
+beta2 = -0.01;                          % anomalous dispersion
+gamma = 0.04;                           % Kerr coefficient
+t0    = 0.1;                            % sech width; N = 1 needs P0 = |beta2| / (gamma * t0^2)
+pulse = struct('samples',    complex(sqrt(abs(beta2) / (gamma * t0^2)) * sech(t / t0)), ...
+               'delta_time', dt);
 
-linearOperator = struct('expr',   "i*beta2*w*w - loss", ...
-                        'params', struct('beta2', -0.005, 'loss', 0.0));
-nonlinearOperator = struct('expr',   "i*gamma*A*I", ...
-                           'params', struct('gamma', 0.01));
+linearOp    = @(A, w) 1i * (beta2 / 2) * w.^2;     % D(w), applied as exp(h*D)
+nonlinearOp = @(A, I) 1i * gamma * A .* I;          % N(A), I = |A|^2
 
-options = struct('propagation_distance', 1.0, ...
-                 'records',              128, ...
-                 'preset',               "balanced");
+options = struct('propagation_distance', 1.0, 'records', 64);
 
 api    = nlolib.NLolib();
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = api.propagate(pulse, linearOp, nonlinearOp, options);
 
+fprintf('peak power in %.3f, out %.3f\n', max(abs(pulse.samples).^2), max(abs(result.final).^2));
 imagesc(t, result.z_axis, abs(result.records).^2);
+xlabel('t'); ylabel('z');
 ```
+
+`result.records` holds one row per recorded `z` (`result.z_axis`), and
+`result.final` is the field at `propagation_distance`.
+
+With the toolbox installed nothing else is needed. From a source checkout, put
+the package on the path and point it at the built library first:
+
+```matlab
+addpath('path/to/nlolib-matlab');
+nlolib_setup();
+setenv('NLOLIB_LIBRARY', 'path/to/libnlolib.so');   % nlolib.dll on Windows
+```
+
+## Operators
+
+Each operator is a function handle whose body is a single expression in the
+runtime symbols. An argument named after a symbol binds to it; other names bind
+in the order shown.
+
+| Operator | Signature | Symbols |
+|---|---|---|
+| linear | `@(A, w, wt, kx, ky, x, y, t)` | `w` angular frequency; `wt`, `kx`, `ky` tensor-run frequency axes; `x`, `y`, `t` coordinates |
+| nonlinear | `@(A, I, V)` | `A` field, `I = abs(A).^2`, `V` the `potential_grid` |
+
+For a coupled `(t, x, y)` run, for example:
+`linearOp = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2))`.
+Other identifiers must be real scalars in the handle's workspace. Strings are
+not accepted and raise `nlolib:stringOperatorRemoved`.
 
 ## Examples
 
@@ -74,7 +103,7 @@ counters say which happened:
 
 ```matlab
 api.perf_profile_reset();
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = api.propagate(pulse, linearOp, nonlinearOp, options);
 
 snapshot = api.perf_profile_read();
 fprintf('%d JIT programs, %d interpreter fallbacks\n', ...
@@ -88,7 +117,6 @@ fprintf('%d JIT programs, %d interpreter fallbacks\n', ...
 | `nlolib.NLolib` | wrapper class: `propagate`, `query_runtime_limits`, logging, progress, performance counters, storage |
 | `nlolib.constants` | C API enum values and limits by name |
 | `nlolib.tensor_record_view` | coupled record row → `(nt, ny, nx)` volume |
-| `nlolib.translate_runtime_handle` | function handle → runtime expression plus captured constants |
 | `nlolib_setup` | add the package, examples and library folders to the MATLAB path |
 
 ## Documentation

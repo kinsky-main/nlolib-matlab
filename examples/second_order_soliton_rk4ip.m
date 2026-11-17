@@ -28,13 +28,10 @@ pulse.delta_time = dt;
 pulse.pulse_period = n * dt;
 pulse.frequency_grid = complex(omega, zeros(1, n));
 
-linearOperator = struct();
-linearOperator.expr = "i*beta2*w*w-loss";
-linearOperator.params = struct('beta2', 0.5 * beta2, 'loss', 0.5 * alpha);
-
-nonlinearOperator = struct();
-nonlinearOperator.expr = "i*A*(gamma*I + V)";
-nonlinearOperator.params = struct('gamma', gamma);
+b2 = 0.5 * beta2;
+loss = 0.5 * alpha;
+linearOperator = @(A, w) 1i * b2 * w.^2 - loss;
+nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
 api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...

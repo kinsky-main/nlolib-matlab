@@ -48,9 +48,10 @@ cfg.error_tolerance = 1e-6;
 cfg.pulse_period = n * dt;
 cfg.delta_time = dt;
 cfg.frequency_grid = complex(omega, zeros(1, n));
-cfg.runtime = struct('dispersion_factor_expr', 'i*c0*w*w', ...
-                     'nonlinear_expr', 'i*c1*A*I', ...
-                     'constants', [0.5, 0.0]);
+beta = 0.5;
+gamma = 0.0;
+cfg.runtime = struct('dispersion_factor_fn', @(A, w) 1i * beta * w .* w, ...
+                     'nonlinear_fn', @(A, I) 1i * gamma * A .* I);
 end
 
 function field = gaussian_field(testCase)

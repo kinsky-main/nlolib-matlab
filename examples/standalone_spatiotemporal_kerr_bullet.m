@@ -195,13 +195,10 @@ pulse.delta_x        = dx;
 pulse.delta_y        = dy;
 pulse.frequency_grid = complex(omega, zeros(1, nt));   % one entry per tensor_nt
 
-linearOperator = struct( ...
-    'expr',   "i*(b2*wt*wt + bt*(kx*kx + ky*ky))", ...
-    'params', struct('b2', 0.5 * beta2, 'bt', betaT));
-
-nonlinearOperator = struct( ...
-    'expr',   "i*gamma*A*I", ...
-    'params', struct('gamma', gammaKerr));
+% Operators are function handles; the scalars they use are captured.
+b2 = 0.5 * beta2;
+linearOperator    = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + betaT * (kx.^2 + ky.^2));
+nonlinearOperator = @(A, I) 1i * gammaKerr * A .* I;
 
 options = struct();
 options.propagation_distance = zFinal;
