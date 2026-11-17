@@ -25,17 +25,14 @@ b2 = 0.5 * beta2;
 linearOperator = @(A, w) 1i * b2 * w.^2;
 nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
-api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "auto");
-execOptions = backend.make_exec_options(simOptions, numRecords);
-propagateOptions = struct();
-propagateOptions.propagation_distance = zFinal;
-propagateOptions.records = numRecords;
-propagateOptions.preset = "accuracy";
-propagateOptions.exec_options = execOptions;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=zFinal, ...
+    num_records=numRecords, ...
+    preset="accuracy", ...
+    exec_options=backend.make_exec_options(simOptions));
 records = result.records;
 zRecords = result.z_axis;
 

@@ -46,7 +46,7 @@ ctest --test-dir build -C Release -R "^test_matlab_"
 ```matlab
 addpath('build/matlab_toolbox');
 nlolib_setup();
-api = nlolib.NLolib();
+nlolib.load();   % optional: every nlolib function loads the library on first use
 ```
 
 ## The core pin

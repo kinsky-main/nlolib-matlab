@@ -260,16 +260,16 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[])
 {
     if (nrhs != 4 || !mxIsChar(prhs[0]) || !mxIsChar(prhs[1]) || !mxIsChar(prhs[2]) ||
         !mxIsNumeric(prhs[3]) || mxGetNumberOfElements(prhs[3]) != 1) {
-        mexErrMsgIdAndTxt("nlolib:progressMexUsage",
+        mexErrMsgIdAndTxt("nlolib:invalidOption",
                           "Usage: address = progress_mex('callback', libraryPath, style, milestonePercent)");
     }
     char command[32];
     if (mxGetString(prhs[0], command, sizeof(command)) != 0 || strcmp(command, "callback") != 0) {
-        mexErrMsgIdAndTxt("nlolib:progressMexUsage", "Unknown command; expected 'callback'.");
+        mexErrMsgIdAndTxt("nlolib:invalidOption", "Unknown command; expected 'callback'.");
     }
     char* library_path = mxArrayToUTF8String(prhs[1]);
     if (library_path == NULL) {
-        mexErrMsgIdAndTxt("nlolib:progressMexUsage", "libraryPath must be a char vector.");
+        mexErrMsgIdAndTxt("nlolib:invalidOption", "libraryPath must be a char vector.");
     }
     g_read_log_buffer = resolve_read_log_buffer(library_path);
     mxFree(library_path);
@@ -277,7 +277,7 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[])
     char style[16];
     if (mxGetString(prhs[2], style, sizeof(style)) != 0 ||
         (strcmp(style, "inline") != 0 && strcmp(style, "lines") != 0)) {
-        mexErrMsgIdAndTxt("nlolib:progressMexUsage", "style must be 'inline' or 'lines'.");
+        mexErrMsgIdAndTxt("nlolib:invalidOption", "style must be 'inline' or 'lines'.");
     }
     g_lines_style = (strcmp(style, "lines") == 0);
     const double milestone = mxGetScalar(prhs[3]);

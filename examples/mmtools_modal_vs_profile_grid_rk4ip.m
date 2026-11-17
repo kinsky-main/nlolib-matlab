@@ -32,13 +32,12 @@ caseCfg = build_case_config(params.smoke);
 add_mmtools_paths(mmtoolsRoot);
 
 fprintf("Verified MATLAB GPU, constructing nlolib handle.\n");
-api = nlolib.NLolib();
-verify_nlolib_gpu_available(api);
+verify_nlolib_gpu_available();
 fprintf("nlolib GPU smoke passed. Running MMTools case.\n");
 
 [mmResult, mmRuntimeSeconds] = run_mmtools_case(mmtoolsRoot, caseCfg);
 fprintf("MMTools case complete. Running nlolib full-profile case.\n");
-[nloResult, nloRuntimeSeconds] = run_nlolib_case(api, caseCfg);
+[nloResult, nloRuntimeSeconds] = run_nlolib_case(caseCfg);
 fprintf("nlolib full-profile case complete. Writing outputs.\n");
 
 summary = table( ...
@@ -158,25 +157,16 @@ for idx = 1:numel(pathsToAdd)
 end
 end
 
-function verify_nlolib_gpu_available(api)
-dt = 0.02;
-cfg = struct( ...
-    'num_time_samples', 32, ...
-    'propagation_distance', 0.01, ...
-    'starting_step_size', 0.001, ...
-    'max_step_size', 0.02, ...
-    'min_step_size', 0.000001, ...
-    'error_tolerance', 1e-9, ...
-    'pulse_period', 32 * dt, ...
-    'delta_time', dt, ...
-    'frequency_grid', complex(zeros(1, 32), zeros(1, 32)) ...
-);
-field0 = complex(ones(1, 32), zeros(1, 32));
+function verify_nlolib_gpu_available()
+pulse = struct('samples', complex(ones(1, 32), zeros(1, 32)), 'delta_time', 0.02);
 execOptions = backend.make_exec_options( ...
-    backend.default_simulation_options("backend", "vulkan", "fft_backend", "auto"), ...
-    1);
+    backend.default_simulation_options("backend", "vulkan", "fft_backend", "auto"));
 try
-    api.propagate(cfg, field0, 1, execOptions);
+    nlolib.propagate(pulse, @(A, w) 0 * w, @(A, I) 0 * A, ...
+                     propagation_distance=0.01, num_records=1, ...
+                     starting_step_size=0.001, max_step_size=0.02, ...
+                     min_step_size=0.000001, error_tolerance=1e-9, ...
+                     exec_options=execOptions);
 catch ME
     error("nlolib GPU/Vulkan execution path is unavailable: %s", ME.message);
 end
@@ -271,12 +261,12 @@ result = struct( ...
 );
 end
 
-function [result, runtimeSeconds] = run_nlolib_case(api, cfg)
+function [result, runtimeSeconds] = run_nlolib_case(cfg)
 simOptions = backend.default_simulation_options( ...
     "backend", "vulkan", ...
     "fft_backend", "auto", ...
     "device_heap_fraction", 0.70);
-execOptions = backend.make_exec_options(simOptions, 2);
+execOptions = backend.make_exec_options(simOptions);
 
 nt = cfg.nt;
 nx = cfg.grid_n;
@@ -307,7 +297,6 @@ pulse.pulse_period = cfg.time_window_ps;
 pulse.tensor_nt = nt;
 pulse.tensor_nx = nx;
 pulse.tensor_ny = ny;
-pulse.tensor_layout = 0;
 pulse.frequency_grid = complex(omega, zeros(1, nt));
 pulse.delta_x = dx;
 pulse.delta_y = dy;
@@ -320,18 +309,17 @@ gamma = cfg.gamma_grid;
 linearOperator = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + betaT * (kx.^2 + ky.^2));
 nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
-propagateOptions = struct();
-propagateOptions.propagation_distance = cfg.propagation_length_m;
-propagateOptions.records = 2;
-propagateOptions.exec_options = execOptions;
-propagateOptions.starting_step_size = cfg.propagation_length_m / cfg.step_count;
-propagateOptions.max_step_size = cfg.propagation_length_m / cfg.step_count;
-propagateOptions.min_step_size = cfg.propagation_length_m / cfg.step_count;
-propagateOptions.error_tolerance = 1e-9;
-
+fixedStep = cfg.propagation_length_m / cfg.step_count;
 try
     tic;
-    propagation = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+    propagation = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+        propagation_distance=cfg.propagation_length_m, ...
+        num_records=2, ...
+        exec_options=execOptions, ...
+        starting_step_size=fixedStep, ...
+        max_step_size=fixedStep, ...
+        min_step_size=fixedStep, ...
+        error_tolerance=1e-9);
     runtimeSeconds = toc;
 catch ME
     error("nlolib GPU propagation failed: %s", ME.message);
@@ -478,7 +466,7 @@ end
 
 function flat = flatten_tyx(volumeTYX)
 %FLATTEN_TYX Flatten an (nt, ny, nx) volume into nlolib's tensor layout.
-%   TENSOR_LAYOUT_XYT_T_FAST is t fastest, then y, then x, which is exactly
+%   nlolib's tensor layout is t fastest, then y, then x, which is exactly
 %   MATLAB's own column-major ordering for an (nt, ny, nx) array, so the
 %   volume flattens with a plain reshape.
 flat = reshape(volumeTYX, 1, []);

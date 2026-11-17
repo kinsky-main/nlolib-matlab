@@ -20,17 +20,14 @@ pulse.frequency_grid = complex(backend.angular_frequency_grid(n, dt), zeros(1, n
 linearOperator = @(A, w) 1i * scale .* (w .* w);
 nonlinearOperator = @(A, I) 0 .* I;
 
-api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "vkfft");
-execOptions = backend.make_exec_options(simOptions, 2);
-propagateOptions = struct();
-propagateOptions.propagation_distance = zFinal;
-propagateOptions.records = 2;
-propagateOptions.preset = "accuracy";
-propagateOptions.exec_options = execOptions;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=zFinal, ...
+    num_records=2, ...
+    preset="accuracy", ...
+    exec_options=backend.make_exec_options(simOptions));
 records = result.records;
 zRecords = result.z_axis;
 

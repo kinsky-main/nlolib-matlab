@@ -28,7 +28,7 @@
 %   normalised to unit peak amplitude, so gamma is the on-axis nonlinear
 %   phase rate in rad/um.
 
-if exist("nlolib.NLolib", "class") ~= 8
+if isempty(which("nlolib.propagate"))
     error("nlolib is not on the MATLAB path. Install nlolib.mltbx, or run " + ...
           "addpath('<repo>/build/matlab_toolbox'); nlolib_setup();");
 end
@@ -80,11 +80,10 @@ half  = floor((nt - 1) / 2);
 omega = (2 * pi / (nt * dt)) * (idx0 - nt * (idx0 > half));
 
 % ------------------------------------------------------------------ solve
-api = nlolib.NLolib();
 
-linearCase = run_case(api, 0.0, field0, omega, nt, nx, ny, dt, dx, dy, ...
+linearCase = run_case(0.0, field0, omega, nt, nx, ny, dt, dx, dy, ...
                       betaT, beta2, zFinal, numRecords, t, x);
-kerrCase   = run_case(api, gammaKerr, field0, omega, nt, nx, ny, dt, dx, dy, ...
+kerrCase   = run_case(gammaKerr, field0, omega, nt, nx, ny, dt, dx, dy, ...
                       betaT, beta2, zFinal, numRecords, t, x);
 
 zAxis = kerrCase.z;
@@ -176,11 +175,11 @@ legend("Location", "northeast");
 % Local functions
 % ========================================================================
 
-function out = run_case(api, gammaKerr, field0, omega, nt, nx, ny, dt, dx, dy, ...
+function out = run_case(gammaKerr, field0, omega, nt, nx, ny, dt, dx, dy, ...
                         betaT, beta2, zFinal, numRecords, t, x)
 %RUN_CASE Propagate the packet once and reduce the records to curves/maps.
 
-% nlolib's tensor layout (TENSOR_LAYOUT_XYT_T_FAST) is t fastest, then y,
+% nlolib's tensor layout is t fastest, then y,
 % then x -- which is exactly MATLAB's own ordering for an (nt, ny, nx) array,
 % so the volume flattens with a plain reshape.
 pulse = struct();
@@ -188,7 +187,6 @@ pulse.samples        = reshape(field0, 1, []);
 pulse.tensor_nt      = nt;
 pulse.tensor_nx      = nx;
 pulse.tensor_ny      = ny;
-pulse.tensor_layout  = 0;                        % 0 = row-major t,y,x
 pulse.delta_time     = dt;
 pulse.pulse_period   = nt * dt;
 pulse.delta_x        = dx;
@@ -200,14 +198,13 @@ b2 = 0.5 * beta2;
 linearOperator    = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + betaT * (kx.^2 + ky.^2));
 nonlinearOperator = @(A, I) 1i * gammaKerr * A .* I;
 
-options = struct();
-options.propagation_distance = zFinal;
-options.records              = numRecords;
-options.preset               = "accuracy";       % "fast" | "balanced" | "accuracy"
-% options.exec_options = struct('backend_type', 0);   % 0 = CPU, 1 = Vulkan, 2 = auto
-
 tic;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance = zFinal, ...
+    num_records          = numRecords, ...
+    preset               = "accuracy");       % "fast" | "balanced" | "accuracy"
+% Add exec_options = struct('backend_type', "cpu") to pick a backend
+% ("cpu", "vulkan" or "auto").
 elapsed = toc;
 
 recordsFlat = result.records;

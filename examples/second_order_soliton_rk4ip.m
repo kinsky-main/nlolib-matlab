@@ -33,20 +33,16 @@ loss = 0.5 * alpha;
 linearOperator = @(A, w) 1i * b2 * w.^2 - loss;
 nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
-api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "auto");
-execOptions = backend.make_exec_options(simOptions, numRecords);
-execOptions.capture_step_history = true;
-execOptions.step_history_capacity = uint64(200000);
-
-propagateOptions = struct();
-propagateOptions.propagation_distance = zFinal;
-propagateOptions.records = numRecords;
-propagateOptions.preset = "balanced";
-propagateOptions.exec_options = execOptions;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=zFinal, ...
+    num_records=numRecords, ...
+    preset="balanced", ...
+    exec_options=backend.make_exec_options(simOptions), ...
+    capture_step_history=true, ...
+    step_history_capacity=200000);
 aRecords = result.records;
 zRecords = result.z_axis;
 stepTelemetry = step_telemetry_from_result(result);

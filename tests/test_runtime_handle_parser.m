@@ -1,291 +1,296 @@
 function tests = test_runtime_handle_parser()
 %TEST_RUNTIME_HANDLE_PARSER Operator function handles: lowering and parity.
 %
-%   Operators are function handles only. The handles are lowered to the C
-%   runtime expressions privately, so these tests read the lowered text back
-%   from the runtime_operator_params libstruct that prepare_sim_config builds.
+%   Operators are function handles only. They are lowered to the C runtime
+%   expressions by the private translate_runtime_handle, which these tests
+%   call through a handle taken inside +nlolib/private. The lowering and the
+%   argument checks need no shared library; the propagation parity tests are
+%   skipped when none is available (set NLOLIB_LIBRARY to select one).
 tests = functiontests(localfunctions);
 end
 
 function setupOnce(testCase)
-try
-    testCase.TestData.api = nlolib.NLolib();
-catch ME
-    assumeFail(testCase, sprintf('nlolib library unavailable: %s', ME.message));
+bindingRoot = fileparts(fileparts(mfilename('fullpath')));
+previous = cd(fullfile(bindingRoot, '+nlolib', 'private'));
+restore = onCleanup(@() cd(previous));
+testCase.TestData.lower = @translate_runtime_handle;
 end
-end
+
+% --- lowering --------------------------------------------------------------
 
 function testTranslateElementwiseAndImaginaryUnit(testCase)
 beta2 = 0.5;
-lowered = lower_runtime(struct('dispersion_factor_fn', @(A, w) 1i * beta2 .* (w .^ 2)));
-
-verifyEqual(testCase, lowered.dispersion_factor_expr, 'i*c0*(w^2)');
-verifyEqual(testCase, lowered.constants, beta2, "AbsTol", 0.0);
+[expr, constants] = lower(testCase, @(A, w) 1i * beta2 .* (w .^ 2), 'dispersion_factor');
+verifyEqual(testCase, expr, 'i*c0*(w^2)');
+verifyEqual(testCase, constants, beta2, "AbsTol", 0.0);
 end
 
 function testTranslateBetaSumConstants(testCase)
 beta2 = 0.04;
 beta3 = -0.003;
 beta4 = 0.0002;
-lowered = lower_runtime(struct('dispersion_factor_fn', ...
-    @(A, w) 1i * (beta2 .* (w .^ 2) + beta3 .* (w .^ 3) + beta4 .* (w .^ 4))));
-
-verifyEqual(testCase, lowered.dispersion_factor_expr, 'i*(c0*(w^2)+c1*(w^3)+c2*(w^4))');
-verifyEqual(testCase, lowered.constants, [beta2, beta3, beta4], "AbsTol", 0.0);
-end
-
-function testLinearAndNonlinearConstantsAreConcatenated(testCase)
-betaT = -0.018;
-gamma = 0.015;
-fR = 0.18;
-lowered = lower_runtime(struct( ...
-    'dispersion_factor_fn', @(A, w) 1i * betaT .* w, ...
-    'nonlinear_fn', @(A, I, V) 1i .* A .* (gamma .* (1.0 - fR) .* I + gamma .* fR .* V)));
-
-verifyEqual(testCase, lowered.dispersion_factor_expr, 'i*c0*w');
-verifyEqual(testCase, lowered.nonlinear_expr, 'i*A*(c1*(1.0-c2)*I+c1*c2*V)');
-verifyEqual(testCase, lowered.constants, [betaT, gamma, fR], "AbsTol", 0.0);
+[expr, constants] = lower(testCase, ...
+    @(A, w) 1i * (beta2 .* (w .^ 2) + beta3 .* (w .^ 3) + beta4 .* (w .^ 4)), 'dispersion_factor');
+verifyEqual(testCase, expr, 'i*(c0*(w^2)+c1*(w^3)+c2*(w^4))');
+verifyEqual(testCase, constants, [beta2, beta3, beta4], "AbsTol", 0.0);
 end
 
 function testArgumentsBindByNameThenPosition(testCase)
-% Any names bind in context order; a symbol name binds to that symbol even
+% Any names bind in parameter order; a symbol name binds to that symbol even
 % out of order, and an argument renamed to a symbol is not renamed again.
-lowered = lower_runtime(struct( ...
-    'dispersion_factor_fn', @(field, omega) 1i * omega .^ 2 .* 0 + field .* 0, ...
-    'nonlinear_fn', @(V, A, I) 1i * A .* (I + V)));
-verifyEqual(testCase, lowered.dispersion_factor_expr, 'i*w^2*0+A*0');
-verifyEqual(testCase, lowered.nonlinear_expr, 'i*A*(I+V)');
+verifyEqual(testCase, lower(testCase, @(field, omega) 1i * omega .^ 2 .* 0 + field .* 0, ...
+                            'dispersion_factor'), 'i*w^2*0+A*0');
+verifyEqual(testCase, lower(testCase, @(V, A, I) 1i * A .* (I + V), 'nonlinear'), 'i*A*(I+V)');
+verifyEqual(testCase, lower(testCase, @(A, wt, kx, ky) 1i * (wt .^ 2 + kx .^ 2 + ky .^ 2), ...
+                            'linear_factor'), 'i*(wt^2+kx^2+ky^2)');
+verifyEqual(testCase, lower(testCase, @(A, D, h) exp(h .* D), 'dispersion'), 'exp(h*D)');
+verifyEqual(testCase, lower(testCase, @(x, y) x .^ 2 + y .^ 2, 'potential'), 'x^2+y^2');
+% Named arguments bind first, wherever they are; the rest fill in order.
+verifyEqual(testCase, lower(testCase, @(B, A) A + B, 'dispersion_factor'), 'A+w');
+end
 
-lowered = lower_runtime(struct('linear_factor_fn', @(A, wt, kx, ky) 1i * (wt .^ 2 + kx .^ 2 + ky .^ 2)));
-verifyEqual(testCase, lowered.linear_factor_expr, 'i*(wt^2+kx^2+ky^2)');
+function testTwoArgumentsForOneSymbolRejected(testCase)
+% In a tensor run w is wt, so the old @(A, w, wt, kx, ky) signature would bind
+% wt twice; shifting it would silently rename kx to ky and ky to x.
+verifyError(testCase, @() lower(testCase, @(A, w, wt, kx, ky) kx + ky, 'linear_factor'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, w, wt) w, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
+end
+
+function testWAndWtAreAliasesInLinearContexts(testCase)
+% One linear operator written as @(A, w) works for both run types.
+verifyEqual(testCase, lower(testCase, @(A, w) 1i * w .^ 2, 'linear_factor'), 'i*wt^2');
+verifyEqual(testCase, lower(testCase, @(A, wt) 1i * wt .^ 2, 'dispersion_factor'), 'i*w^2');
+verifyEqual(testCase, lower(testCase, @(A, D, h, w) exp(h .* D) + w, 'linear'), 'exp(h*D)+wt');
+verifyEqual(testCase, lower(testCase, @(A, kx, w) kx + w, 'linear_factor'), 'kx+wt');
+end
+
+function testSymbolsOutsideTheContextAreRejected(testCase)
+% The C parser rejects these; the binding reports them before the C call.
+verifyError(testCase, @() lower(testCase, @(A, w) 1i * w .^ 2 + kx, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, w) w + t, 'dispersion'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(x, y) x + wt, 'potential'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, I) A .* I + t, 'nonlinear'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, w, a, b) w, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
 end
 
 function testNumberLiterals(testCase)
-lowered = lower_runtime(struct('dispersion_factor_fn', @(A, w) 0.5i * w - 2.5e-3 + 1j));
-verifyEqual(testCase, lowered.dispersion_factor_expr, '(0.5*i)*w-2.5e-3+i');
-verifyEmpty(testCase, lowered.constants);
+[expr, constants] = lower(testCase, @(A, w) 0.5i * w - 2.5e-3 + 1j, 'dispersion_factor');
+verifyEqual(testCase, expr, '(0.5*i)*w-2.5e-3+i');
+verifyEmpty(testCase, constants);
 end
 
-function testTranslateUnknownIdentifierRejected(testCase)
+function testUnknownIdentifierRejected(testCase)
+verifyError(testCase, @() lower(testCase, @(A, w) 1i * notDefinedAnywhere .* w, ...
+                                'dispersion_factor'), 'nlolib:invalidOperator');
+end
+
+function testConstantBindingsWinOverCapture(testCase)
 beta2 = 0.5;
-verifyError(testCase, @() lower_runtime(struct( ...
-    'dispersion_factor_fn', @(A, w) 1i * beta2 .* w, ...
-    'auto_capture_constants', false)), 'nlolib:invalidOperatorSpec');
+[expr, constants] = lower(testCase, @(A, w) 1i * beta2 .* w, 'dispersion_factor', ...
+                          struct('beta2', 0.25));
+verifyEqual(testCase, expr, 'i*c0*w');
+verifyEqual(testCase, constants, 0.25, "AbsTol", 0.0);
+[~, constants] = lower(testCase, @(A, w) 1i * b2 .* w, 'dispersion_factor', ...
+                       containers.Map({'b2'}, {0.75}));
+verifyEqual(testCase, constants, 0.75, "AbsTol", 0.0);
 end
 
-function testConstantBindingsPinValues(testCase)
-lowered = lower_runtime(struct( ...
-    'dispersion_factor_fn', @(A, w) 1i * beta2 .* w, ...
-    'auto_capture_constants', false, ...
-    'constant_bindings', struct('beta2', 0.25)));
-verifyEqual(testCase, lowered.dispersion_factor_expr, 'i*c0*w');
-verifyEqual(testCase, lowered.constants, 0.25, "AbsTol", 0.0);
-end
-
-function testTranslateComplexCaptureRejected(testCase)
+function testComplexCaptureRejected(testCase)
 badGain = 1.0 + 2.0i;
-verifyError(testCase, @() lower_runtime(struct( ...
-    'dispersion_factor_fn', @(A, w) badGain .* w)), 'nlolib:invalidOperatorSpec');
+verifyError(testCase, @() lower(testCase, @(A, w) badGain .* w, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
 end
 
-function testStringOperatorsRejected(testCase)
-% The string-expression API has been removed from every entry point.
-removedFields = {'dispersion_factor_expr', 'dispersion_expr', 'linear_factor_expr', ...
-                 'linear_expr', 'potential_expr', 'nonlinear_expr'};
-for idx = 1:numel(removedFields)
-    verifyError(testCase, ...
-        @() lower_runtime(struct(removedFields{idx}, "i*c0*w*w", 'constants', 0.5)), ...
-        'nlolib:stringOperatorRemoved');
-end
-verifyError(testCase, @() lower_runtime(struct('nonlinear_fn', "i*A*I")), ...
-            'nlolib:stringOperatorRemoved');
-verifyError(testCase, @() lower_runtime(struct('nonlinear_fn', 'i*A*I')), ...
-            'nlolib:stringOperatorRemoved');
+% --- what propagate accepts -------------------------------------------------
 
-api = testCase.TestData.api;
-pulse = struct('samples', complex(sech(linspace(-4, 4, 32))), 'delta_time', 0.02);
-options = struct('propagation_distance', 0.01, ...
-                 'exec_options', struct('backend_type', nlolib.constants.VECTOR_BACKEND_CPU));
+function testNonHandleOperatorsRejected(testCase)
+% Strings, presets and struct specs are not operators. These fail before the
+% library is needed.
+pulse = small_pulse();
 kerr = @(A, I) 1i * A .* I;
 gvd = @(A, w) -0.5i * w .^ 2;
-verifyError(testCase, @() api.propagate(pulse, "gvd", kerr, options), ...
-            'nlolib:stringOperatorRemoved');
-verifyError(testCase, @() api.propagate(pulse, gvd, 'i*A*I', options), ...
-            'nlolib:stringOperatorRemoved');
-verifyError(testCase, @() api.propagate(pulse, struct('expr', "i*w"), kerr, options), ...
-            'nlolib:invalidOperatorSpec');
-verifyError(testCase, @() api.propagate(pulse, struct('fn', gvd), kerr, options), ...
-            'nlolib:invalidOperatorSpec');
-verifyError(testCase, @() api.propagate(pulse, options), ...
-            'nlolib:invalidPropagateCall');
+verifyError(testCase, @() lower(testCase, "i*w", 'dispersion_factor'), 'nlolib:invalidOperator');
+verifyError(testCase, @() nlolib.propagate(pulse, "gvd", kerr, propagation_distance=0.01), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, 'i*A*I', propagation_distance=0.01), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() nlolib.propagate(pulse, struct('expr', "i*w"), kerr, ...
+                                           propagation_distance=0.01), 'nlolib:invalidOperator');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=0.01, ...
+                                           linear_step_operator="exp(h*D)"), ...
+            'nlolib:invalidOperator');
 end
 
-function testBetaSumPropagationParity(testCase)
-% A captured-constant handle and the same operator with pinned bindings and
-% different argument names must lower to the same propagation.
-api = testCase.TestData.api;
-execOpts = struct('backend_type', int32(0));
+function testOptionsAreChecked(testCase)
+pulse = small_pulse();
+kerr = @(A, I) 1i * A .* I;
+gvd = @(A, w) -0.5i * w .^ 2;
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr), 'nlolib:invalidOption');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=-1), ...
+            'nlolib:invalidOption');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, ...
+                                           preset="slow"), 'nlolib:invalidOption');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, ...
+                                           record_z=[0, 0.5], num_records=3), 'nlolib:invalidOption');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, ...
+                                           record_z=[0.5, 0.25]), 'nlolib:invalidOption');
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, ...
+                                           nonlinear_model=1), 'nlolib:invalidOption');
+% potential_operator is compiled only for tensor runs.
+verifyError(testCase, @() nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, ...
+                                           potential_operator=@(x, y) x), 'nlolib:invalidOption');
+% An unknown option name is MATLAB's own name=value error.
+try
+    nlolib.propagate(pulse, gvd, kerr, propagation_distance=1, records=4);
+    verifyFail(testCase, 'an unknown option name was accepted');
+catch ME
+    verifyFalse(testCase, startsWith(ME.identifier, 'nlolib:'), ME.identifier);
+end
+end
 
+function testPulseIsChecked(testCase)
+kerr = @(A, I) 1i * A .* I;
+gvd = @(A, w) -0.5i * w .^ 2;
+pulse = small_pulse();
+verifyError(testCase, @() nlolib.propagate(rmfield(pulse, 'delta_time'), gvd, kerr, ...
+                                           propagation_distance=1), 'nlolib:invalidPulse');
+withLayout = pulse;
+withLayout.tensor_layout = 0;
+verifyError(testCase, @() nlolib.propagate(withLayout, gvd, kerr, propagation_distance=1), ...
+            'nlolib:invalidPulse');
+tensor = struct('samples', zeros(1, 12), 'delta_time', 0.1, ...
+                'tensor_nt', 2, 'tensor_nx', 2, 'tensor_ny', 2);
+verifyError(testCase, @() nlolib.propagate(tensor, gvd, kerr, propagation_distance=1), ...
+            'nlolib:invalidPulse');
+partial = struct('samples', zeros(1, 8), 'delta_time', 0.1, 'tensor_nt', 8);
+verifyError(testCase, @() nlolib.propagate(partial, gvd, kerr, propagation_distance=1), ...
+            'nlolib:invalidPulse');
+end
+
+% --- propagation parity (needs the library) --------------------------------
+
+function testBetaSumPropagationParity(testCase)
+% A captured-constant handle and the same operator with bound constants and
+% different argument names must give the same propagation.
+require_library(testCase);
 n = 192;
 dt = 0.02;
 beta2 = 0.04;
 beta3 = -0.003;
 beta4 = 0.0002;
-omega = omega_grid_unshifted(n, dt);
-inputField = deterministic_complex_field(n);
+pulse = struct('samples', deterministic_complex_field(n), 'delta_time', dt);
+common = {'propagation_distance', 0.08, 'num_records', 2, ...
+          'exec_options', struct('backend_type', "cpu")};
 
-common = base_runtime_config(n, dt, 0.08, omega);
-
-cfgCaptured = common;
-cfgCaptured.runtime = struct( ...
-    'dispersion_factor_fn', @(A, w) 1i * (beta2 * (w ^ 2) + beta3 * (w ^ 3) + beta4 * (w ^ 4)));
-
-cfgBound = common;
-cfgBound.runtime = struct( ...
-    'dispersion_factor_fn', @(field, omega) 1i * (b2 * omega .^ 2 + b3 * omega .^ 3 + b4 * omega .^ 4), ...
-    'auto_capture_constants', false, ...
-    'constant_bindings', struct('b2', beta2, 'b3', beta3, 'b4', beta4));
-
-resCaptured = api.propagate(cfgCaptured, inputField, uint64(2), execOpts);
-resBound = api.propagate(cfgBound, inputField, uint64(2), execOpts);
-verifyGreaterThan(testCase, max_abs_diff(resCaptured.records(2, :), inputField), 1e-6);
-err = max_abs_diff(resCaptured.records(2, :), resBound.records(2, :));
-verifyLessThanOrEqual(testCase, err, 5e-7);
+resCaptured = nlolib.propagate(pulse, ...
+    @(A, w) 1i * (beta2 * (w ^ 2) + beta3 * (w ^ 3) + beta4 * (w ^ 4)), ...
+    @(A, I) 0 * A, common{:});
+resBound = nlolib.propagate(pulse, ...
+    @(field, omega) 1i * (b2 * omega .^ 2 + b3 * omega .^ 3 + b4 * omega .^ 4), ...
+    @(A, I) 0 * A, common{:}, ...
+    constant_bindings=struct('b2', beta2, 'b3', beta3, 'b4', beta4));
+verifyGreaterThan(testCase, max_abs_diff(resCaptured.final, pulse.samples), 1e-6);
+verifyLessThanOrEqual(testCase, max_abs_diff(resCaptured.final, resBound.final), 5e-7);
 end
 
-function testDiffractionPropagationParity(testCase)
-% linear_factor_fn/linear_fn and dispersion_factor_fn/dispersion_fn are the
-% two names of the tensor linear operator.
-api = testCase.TestData.api;
-execOpts = struct('backend_type', int32(0));
-
-nt = 1;
+function testTensorLinearOperatorParity(testCase)
+% A tensor run lowers linear_operator in the linear_factor context, where w
+% is an alias of wt; an explicit linear_step_operator exp(h*D) is the default.
+require_library(testCase);
+nt = 4;
 nx = 6;
 ny = 4;
-n = nt * nx * ny;
 betaT = -0.018;
-inputField = deterministic_complex_field(n);
+pulse = struct('samples', deterministic_complex_field(nt * nx * ny), 'delta_time', 0.02, ...
+               'tensor_nt', nt, 'tensor_nx', nx, 'tensor_ny', ny);
+common = {'propagation_distance', 0.01, 'num_records', 2, ...
+          'exec_options', struct('backend_type', "cpu")};
 
-cfgCommon = coupled_runtime_config(nt, nx, ny);
-cfgCommon.potential_grid = complex(zeros(1, n), zeros(1, n));
-
-cfgLinear = cfgCommon;
-cfgLinear.runtime = struct( ...
-    'linear_factor_fn', @(A, wt, kx, ky) 1i * betaT * (kx .* kx + ky .* ky), ...
-    'linear_fn', @(A, D, h) exp(h .* D), ...
-    'nonlinear_fn', @(A) 0);
-
-cfgDispersion = cfgCommon;
-cfgDispersion.runtime = struct( ...
-    'dispersion_factor_fn', @(A, w, wt, kx, ky) 1i * betaT * (kx .* kx + ky .* ky), ...
-    'dispersion_fn', @(A, D, h) exp(h .* D), ...
-    'nonlinear_fn', @(A) 0);
-
-resLinear = api.propagate(cfgLinear, inputField, uint64(2), execOpts);
-resDispersion = api.propagate(cfgDispersion, inputField, uint64(2), execOpts);
-verifyGreaterThan(testCase, max_abs_diff(resLinear.records(2, :), inputField), 1e-8);
-err = max_abs_diff(resLinear.records(2, :), resDispersion.records(2, :));
-verifyLessThanOrEqual(testCase, err, 1e-7);
+resWt = nlolib.propagate(pulse, @(A, wt, kx, ky) 1i * (0.01 * wt .^ 2 + betaT * (kx .^ 2 + ky .^ 2)), ...
+                         @(A) 0 * A, common{:});
+resW = nlolib.propagate(pulse, @(A, w, kx, ky) 1i * (0.01 * w .^ 2 + betaT * (kx .^ 2 + ky .^ 2)), ...
+                        @(A) 0 * A, common{:}, linear_step_operator=@(A, D, h) exp(h .* D));
+verifyGreaterThan(testCase, max_abs_diff(resWt.final, pulse.samples), 1e-8);
+verifyLessThanOrEqual(testCase, max_abs_diff(resWt.final, resW.final), 1e-7);
+verifyTrue(testCase, resWt.meta.coupled);
 end
 
-function testRamanLikePropagationParity(testCase)
+function testNonlinearArgumentOrderParity(testCase)
 % Argument order must not matter when the names are runtime symbols.
-api = testCase.TestData.api;
-execOpts = struct('backend_type', int32(0));
-
+require_library(testCase);
 nt = 4;
 nx = 4;
 ny = 4;
-n = nt * nx * ny;
 gamma = 0.015;
 fR = 0.18;
-potentialXY = complex(0.02 * double(1:(nx * ny)), zeros(1, nx * ny));
-potential = repmat(potentialXY, 1, nt);
-inputField = deterministic_complex_field(n);
+pulse = struct('samples', deterministic_complex_field(nt * nx * ny), 'delta_time', 0.02, ...
+               'tensor_nt', nt, 'tensor_nx', nx, 'tensor_ny', ny, ...
+               'potential_grid', complex(0.02 * double(1:(nx * ny)), zeros(1, nx * ny)));
+common = {'propagation_distance', 0.008, 'num_records', 2, ...
+          'exec_options', struct('backend_type', "cpu")};
 
-cfgCommon = coupled_runtime_config(nt, nx, ny);
-cfgCommon.potential_grid = potential;
-cfgCommon.propagation_distance = 0.008;
-cfgCommon.runtime = struct( ...
-    'linear_factor_fn', @(A) 0, ...
-    'linear_fn', @(A, D, h) exp(h .* D));
-
-cfgOrdered = cfgCommon;
-cfgOrdered.runtime.nonlinear_fn = ...
-    @(A, I, V) 1i .* A .* (gamma .* (1.0 - fR) .* I + gamma .* fR .* V);
-
-cfgShuffled = cfgCommon;
-cfgShuffled.runtime.nonlinear_fn = ...
-    @(V, I, A) 1i .* A .* (gamma .* (1.0 - fR) .* I + gamma .* fR .* V);
-
-resOrdered = api.propagate(cfgOrdered, inputField, uint64(2), execOpts);
-resShuffled = api.propagate(cfgShuffled, inputField, uint64(2), execOpts);
-verifyGreaterThan(testCase, max_abs_diff(resOrdered.records(2, :), inputField), 1e-8);
-err = max_abs_diff(resOrdered.records(2, :), resShuffled.records(2, :));
-verifyLessThanOrEqual(testCase, err, 1e-7);
+resOrdered = nlolib.propagate(pulse, @(A) 0 * A, ...
+    @(A, I, V) 1i .* A .* (gamma .* (1.0 - fR) .* I + gamma .* fR .* V), common{:});
+resShuffled = nlolib.propagate(pulse, @(A) 0 * A, ...
+    @(V, I, A) 1i .* A .* (gamma .* (1.0 - fR) .* I + gamma .* fR .* V), common{:});
+verifyGreaterThan(testCase, max_abs_diff(resOrdered.final, pulse.samples), 1e-8);
+verifyLessThanOrEqual(testCase, max_abs_diff(resOrdered.final, resShuffled.final), 1e-7);
 end
 
-function lowered = lower_runtime(runtime)
-% Lower cfg.runtime through the public prepare_sim_config and read back the
-% expression strings and constants the C API would receive.
-n = 8;
-cfg = base_runtime_config(n, 0.1, 0.1, zeros(1, n));
-cfg.runtime = runtime;
-[~, physicsCfgPtr, keepalive] = nlolib.prepare_sim_config(cfg); %#ok<ASGLU>
-lowered = struct();
-names = {'linear_factor_expr', 'linear_expr', 'potential_expr', ...
-         'dispersion_factor_expr', 'dispersion_expr', 'nonlinear_expr'};
-for idx = 1:numel(names)
-    value = physicsCfgPtr.(names{idx});
-    if isempty(value)
-        value = '';
-    end
-    lowered.(names{idx}) = char(value);
-end
-lowered.constants = physicsCfgPtr.constants(1:double(physicsCfgPtr.num_constants));
+function testPotentialOperatorMatchesPotentialGrid(testCase)
+% potential_operator is the tensor-run alternative to pulse.potential_grid.
+require_library(testCase);
+nt = 2;
+nx = 8;
+ny = 8;
+dx = 0.5;
+x = ((0:(nx - 1)) - (nx - 1) / 2) * dx;   % the core's centred axes
+y = ((0:(ny - 1)) - (ny - 1) / 2) * dx;
+[X, Y] = meshgrid(x, y);           % rows y, columns x
+grid = X .^ 2 + Y .^ 2;            % x-major, y fastest: grid(:) runs y first
+pulse = struct('samples', deterministic_complex_field(nt * nx * ny), 'delta_time', 0.02, ...
+               'tensor_nt', nt, 'tensor_nx', nx, 'tensor_ny', ny, 'delta_x', dx, 'delta_y', dx);
+common = {'propagation_distance', 0.01, 'num_records', 2, ...
+          'exec_options', struct('backend_type', "cpu")};
+nonlinear = @(A, I, V) 1i * 0.3 * A .* V;
+
+withGrid = pulse;
+withGrid.potential_grid = complex(grid(:).');
+resGrid = nlolib.propagate(withGrid, @(A) 0 * A, nonlinear, common{:});
+resOperator = nlolib.propagate(pulse, @(A) 0 * A, nonlinear, common{:}, ...
+                               potential_operator=@(x, y) x .^ 2 + y .^ 2);
+verifyGreaterThan(testCase, max_abs_diff(resGrid.final, pulse.samples), 1e-8);
+verifyLessThanOrEqual(testCase, max_abs_diff(resGrid.final, resOperator.final), 1e-7);
+verifyError(testCase, @() nlolib.propagate(withGrid, @(A) 0 * A, nonlinear, common{:}, ...
+                                           potential_operator=@(x, y) x), 'nlolib:invalidOption');
 end
 
-function cfg = base_runtime_config(n, dt, zFinal, omega)
-cfg = struct();
-cfg.num_time_samples = uint64(n);
-cfg.propagation_distance = zFinal;
-cfg.starting_step_size = 1e-3;
-cfg.max_step_size = 5e-3;
-cfg.min_step_size = 1e-5;
-cfg.error_tolerance = 1e-7;
-cfg.pulse_period = n * dt;
-cfg.delta_time = dt;
-cfg.frequency_grid = complex(omega, zeros(1, n));
+% --- helpers ---------------------------------------------------------------
+
+function [expr, constants] = lower(testCase, fn, context, bindings)
+if nargin < 4
+    bindings = [];
+end
+[expr, constants] = testCase.TestData.lower(fn, context, bindings);
 end
 
-function cfg = coupled_runtime_config(nt, nx, ny)
-cfg = struct();
-cfg.num_time_samples = uint64(nt * nx * ny);
-cfg.propagation_distance = 0.01;
-cfg.starting_step_size = 1e-3;
-cfg.max_step_size = 2e-3;
-cfg.min_step_size = 1e-5;
-cfg.error_tolerance = 1e-7;
-cfg.pulse_period = nt * 0.02;
-cfg.delta_time = 0.02;
-cfg.tensor_nt = uint64(nt);
-cfg.tensor_nx = uint64(nx);
-cfg.tensor_ny = uint64(ny);
-cfg.tensor_layout = int32(0);
-cfg.frequency_grid = complex(zeros(1, nt), zeros(1, nt));
+function require_library(testCase)
+try
+    nlolib.load();
+catch ME
+    assumeFail(testCase, sprintf('nlolib library unavailable: %s', ME.message));
+end
 end
 
-function out = omega_grid_unshifted(n, dt)
-twoPi = 2.0 * pi;
-out = zeros(1, n);
-for idx = 1:n
-    i = idx - 1;
-    if i <= floor((n - 1) / 2)
-        out(idx) = twoPi * (double(i) / (double(n) * dt));
-    else
-        out(idx) = twoPi * (-(double(n - i) / (double(n) * dt)));
-    end
-end
+function pulse = small_pulse()
+pulse = struct('samples', complex(sech(linspace(-4, 4, 32))), 'delta_time', 0.02);
 end
 
 function field = deterministic_complex_field(n)

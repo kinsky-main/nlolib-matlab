@@ -19,22 +19,18 @@ gamma = 0.01;
 linearOperator = @(A, w) 1i * (beta2 / 2.0) * (w .* w);
 nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
-api = nlolib.NLolib();
-api.set_log_buffer(uint64(256 * 1024));
-api.set_log_level(int32(2));
-api.set_progress_options(true, int32(10), false);
+nlolib.set_log_buffer(256 * 1024);
+nlolib.set_log_level("info");
+nlolib.set_progress_options(enabled=true, milestone_percent=10);
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "vkfft");
-execOptions = backend.make_exec_options(simOptions, 2);
-propagateOptions = struct();
-propagateOptions.propagation_distance = 0.25;
-propagateOptions.records = 2;
-propagateOptions.preset = "accuracy";
-propagateOptions.exec_options = execOptions;
-propagateOptions.exec_options.matlab_stream_logs = true;
-propagateOptions.exec_options.matlab_log_buffer_bytes = uint64(256 * 1024);
-result = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=0.25, ...
+    num_records=2, ...
+    preset="accuracy", ...
+    exec_options=backend.make_exec_options(simOptions), ...
+    stream_logs=true);
 records = result.records;
 finalField = records(end, :).';
 

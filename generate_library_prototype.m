@@ -8,7 +8,7 @@ function protoPath = generate_library_prototype(libraryPath, headerPath, outputD
 %     nlolib_proto.m           - prototype describing every exported function
 %     nlolib_thunk_<arch>.<ext> - prebuilt call thunk
 %
-%   Shipping both lets nlolib.NLolib load the library with
+%   Shipping both lets nlolib.load load the library with
 %   loadlibrary(dll, @nlolib_proto), which does no header parsing and needs
 %   no compiler on the client.  The prototype resolves the thunk relative to
 %   its own location, so the two files must stay in the same folder.

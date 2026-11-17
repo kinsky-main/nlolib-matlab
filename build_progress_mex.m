@@ -1,5 +1,5 @@
 function mexPath = build_progress_mex(outDir)
-%BUILD_PROGRESS_MEX Compile the live progress MEX file used by NLolib.propagate.
+%BUILD_PROGRESS_MEX Compile the live progress MEX file used by nlolib.propagate.
 %   mexPath = build_progress_mex()        builds into matlab/+nlolib/private
 %   mexPath = build_progress_mex(outDir)  builds into outDir
 %

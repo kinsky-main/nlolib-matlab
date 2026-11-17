@@ -22,10 +22,10 @@ platforms.
 
 ## Quick start
 
-A run needs a pulse, a linear and a nonlinear operator, and a propagation
-distance. Operators are function handles; the scalars they use (`beta2`,
-`gamma` below) are captured when the run starts. This propagates a
-fundamental soliton, which keeps its shape:
+A run is one call: a pulse, a linear and a nonlinear operator, and options by
+name, of which `propagation_distance` is required. Operators are function
+handles; the scalars they use (`beta2`, `gamma` below) are captured when the
+run starts. This propagates a fundamental soliton, which keeps its shape:
 
 ```matlab
 n  = 1024;
@@ -41,10 +41,8 @@ pulse = struct('samples',    complex(sqrt(abs(beta2) / (gamma * t0^2)) * sech(t 
 linearOp    = @(A, w) 1i * (beta2 / 2) * w.^2;     % D(w), applied as exp(h*D)
 nonlinearOp = @(A, I) 1i * gamma * A .* I;          % N(A), I = |A|^2
 
-options = struct('propagation_distance', 1.0, 'records', 64);
-
-api    = nlolib.NLolib();
-result = api.propagate(pulse, linearOp, nonlinearOp, options);
+result = nlolib.propagate(pulse, linearOp, nonlinearOp, ...
+                          propagation_distance=1.0, num_records=64);
 
 fprintf('peak power in %.3f, out %.3f\n', max(abs(pulse.samples).^2), max(abs(result.final).^2));
 imagesc(t, result.z_axis, abs(result.records).^2);
@@ -52,7 +50,10 @@ xlabel('t'); ylabel('z');
 ```
 
 `result.records` holds one row per recorded `z` (`result.z_axis`), and
-`result.final` is the field at `propagation_distance`.
+`result.final` is the field at `propagation_distance`. `result.meta` says what
+ran (`preset`, `records_requested`, `records_written`, `backend_requested`,
+`coupled`, `status`). The library is loaded on first use; `nlolib.load(path)`
+picks a specific one.
 
 With the toolbox installed nothing else is needed. From a source checkout, put
 the package on the path and point it at the built library first:
@@ -66,18 +67,25 @@ setenv('NLOLIB_LIBRARY', 'path/to/libnlolib.so');   % nlolib.dll on Windows
 ## Operators
 
 Each operator is a function handle whose body is a single expression in the
-runtime symbols. An argument named after a symbol binds to it; other names bind
-in the order shown.
+runtime symbols. An argument named after a symbol binds to it; other names take
+the remaining symbols in the order shown. A run is a tensor run when the pulse
+sets `tensor_nt`, `tensor_nx` and `tensor_ny`.
 
-| Operator | Signature | Symbols |
+| Operator | Temporal run | Tensor run |
 |---|---|---|
-| linear | `@(A, w, wt, kx, ky, x, y, t)` | `w` angular frequency; `wt`, `kx`, `ky` tensor-run frequency axes; `x`, `y`, `t` coordinates |
-| nonlinear | `@(A, I, V)` | `A` field, `I = abs(A).^2`, `V` the `potential_grid` |
+| `linear_operator` (positional) | `@(A, w)` | `@(A, wt, kx, ky, x, y, t)` |
+| `nonlinear_operator` (positional) | `@(A, I, V)` | `@(A, I, V)` |
+| `linear_step_operator` (option) | `@(A, D, h, w, V)` | `@(A, D, h, wt, kx, ky, x, y, t, V)` |
+| `potential_operator` (option) | not allowed | `@(x, y, t)` |
 
-For a coupled `(t, x, y)` run, for example:
+`w` and `wt` name the same frequency axis, so `@(A, w)` works in both run
+types. `A` is the field, `I = abs(A).^2`, `V` the `potential_grid`, and `D`,
+`h` the linear factor and step in the per-step operator (default
+`exp(h*D)`). For a coupled `(t, x, y)` run, for example:
 `linearOp = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2))`.
-Other identifiers must be real scalars in the handle's workspace. Strings are
-not accepted and raise `nlolib:stringOperatorRemoved`.
+Other identifiers must be real scalars in the handle's workspace, or be named in
+`constant_bindings=struct('beta2', -0.01)`, which wins over the workspace.
+Anything but a function handle raises `nlolib:invalidOperator`.
 
 ## Examples
 
@@ -102,22 +110,35 @@ at runtime and falls back to an interpreter silently when it cannot be; two
 counters say which happened:
 
 ```matlab
-api.perf_profile_reset();
-result = api.propagate(pulse, linearOp, nonlinearOp, options);
+nlolib.perf_profile_reset();
+result = nlolib.propagate(pulse, linearOp, nonlinearOp, propagation_distance=1.0, ...
+                          exec_options=struct('backend_type', "vulkan"));
 
-snapshot = api.perf_profile_read();
+snapshot = nlolib.perf_profile_read();
 fprintf('%d JIT programs, %d interpreter fallbacks\n', ...
         snapshot.operator_jit_programs, snapshot.operator_jit_fallbacks);
 ```
 
 ## What is in the toolbox
 
-| Symbol | Purpose |
+| Function | Purpose |
 |---|---|
-| `nlolib.NLolib` | wrapper class: `propagate`, `query_runtime_limits`, logging, progress, performance counters, storage |
-| `nlolib.constants` | C API enum values and limits by name |
-| `nlolib.tensor_record_view` | coupled record row → `(nt, ny, nx)` volume |
+| `nlolib.propagate` | run a propagation; options by name |
+| `nlolib.query_runtime_limits` | memory and record limits for a pulse, without a run |
+| `nlolib.tensor_record_view` | one tensor-run record → `(nt, ny, nx)` volume |
+| `nlolib.load`, `nlolib.unload`, `nlolib.loaded_library_path` | pick, release and report the shared library |
+| `nlolib.storage_is_available` | whether SQLite storage is built in |
+| `nlolib.set_log_level`, `set_log_file`, `set_log_buffer`, `clear_log_buffer`, `read_log_buffer` | runtime logging |
+| `nlolib.set_progress_options`, `set_progress_stream` | progress bar |
+| `nlolib.perf_profile_set_enabled`, `perf_profile_is_enabled`, `perf_profile_reset`, `perf_profile_read` | performance counters |
 | `nlolib_setup` | add the package, examples and library folders to the MATLAB path |
+
+Every option that names a mode takes a lowercase string: `backend_type`
+`"cpu"`, `"vulkan"` or `"auto"`; `preset` `"fast"`, `"balanced"` or
+`"accuracy"`; log level `"error"` to `"debug"`. Errors carry one of seven
+identifiers: `nlolib:invalidOperator`, `nlolib:invalidPulse`,
+`nlolib:invalidOption`, `nlolib:libraryLoadFailed`, `nlolib:unavailable`,
+`nlolib:statusFailed` and `nlolib:propagationAborted`.
 
 ## Documentation
 

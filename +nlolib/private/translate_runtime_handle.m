@@ -1,78 +1,105 @@
-function [expression, constants] = translate_runtime_handle(fn, context, runtime)
+function [expression, constants] = translate_runtime_handle(fn, context, bindings)
 %TRANSLATE_RUNTIME_HANDLE Lower an operator function handle to a C runtime expression.
-%   [expression, constants] = translate_runtime_handle(fn, context, runtime)
+%   [expression, constants] = translate_runtime_handle(fn, context, bindings)
 %
-%   Private: the C API takes operators as expression strings, so the wrapper
-%   lowers each operator handle through this function. Users pass function
-%   handles only.
+%   Private: the C API takes operators as expression strings, so
+%   nlolib.propagate lowers each operator handle through this function.
 %
-%   Each argument binds to a runtime symbol. An argument named after one of
-%   the context's symbols binds to that symbol; any other name binds to the
-%   next unused symbol in the context's order (as in the Python binding):
+%   Each argument binds to a symbol of the context. An argument named after
+%   a symbol, or an alias of one, binds to that symbol; any other name binds
+%   to the next unused symbol in the context's parameter order:
 %
-%     "dispersion_factor"  @(A, w, wt, kx, ky, x, y, t)
-%     "dispersion"         @(A, D, h, w, wt, kx, ky, x, y, t, V)
-%     "linear_factor"      @(A, wt, kx, ky, x, y, t)
-%     "linear"             @(A, D, h, wt, kx, ky, x, y, t, V)
+%     context              parameters                          alias
+%     "dispersion_factor"  @(A, w)                             wt = w
+%     "dispersion"         @(A, D, h, w, V)                    wt = w
+%     "linear_factor"      @(A, wt, kx, ky, x, y, t)           w = wt
+%     "linear"             @(A, D, h, wt, kx, ky, x, y, t, V)  w = wt
+%     "potential"          @(x, y, t)
 %     "nonlinear"          @(A, I, V)
-%     "potential"          @(x, y, t, wt, kx, ky)
 %
 %   The body must be a single expression. Element-wise operators are
 %   normalised (.* -> *, .^ -> ^, ./ -> /) and imaginary literals (1i, 0.5j)
-%   become multiples of i. Any other identifier, apart from the intrinsics
-%   exp, log, sqrt, sin and cos, is captured from the handle's closure as a
-%   real scalar constant; constants(k) is referenced as c<k-1>.
+%   become multiples of i. A runtime symbol the context does not list is an
+%   error. Any other identifier, apart from the intrinsics exp, log, sqrt,
+%   sin and cos, is a real scalar constant: the value in bindings (a struct
+%   or containers.Map, the constant_bindings option) when it names one,
+%   otherwise the value the handle captured from its workspace. constants(k)
+%   is referenced as c<k-1>.
 %
-%   runtime.constant_bindings (struct or containers.Map) pins values
-%   explicitly; runtime.auto_capture_constants = false rejects closure
-%   capture, so every identifier must then be bound.
-if ischar(fn) || isstring(fn)
-    error('nlolib:stringOperatorRemoved', ...
-          ['%s operator must be a function_handle; string expressions are no ' ...
-           'longer accepted. Pass e.g. @(A, w) 1i * beta2 * w.^2.'], context);
-end
-if ~isa(fn, "function_handle")
-    error('nlolib:invalidOperatorSpec', ...
-          '%s operator must be a function_handle, got %s.', context, class(fn));
+%   Every failure is nlolib:invalidOperator.
+if ~isa(fn, 'function_handle')
+    error('nlolib:invalidOperator', ...
+          '%s operator must be a function handle, got %s. Pass e.g. @(A, w) 1i * beta2 * w.^2.', ...
+          context, class(fn));
 end
 context = char(context);
 switch context
     case 'dispersion_factor'
-        symbols = {'A', 'w', 'wt', 'kx', 'ky', 'x', 'y', 't'};
+        params = {'A', 'w'};
+        aliases = struct('wt', 'w');
     case 'dispersion'
-        symbols = {'A', 'D', 'h', 'w', 'wt', 'kx', 'ky', 'x', 'y', 't', 'V'};
+        params = {'A', 'D', 'h', 'w', 'V'};
+        aliases = struct('wt', 'w');
     case 'linear_factor'
-        symbols = {'A', 'wt', 'kx', 'ky', 'x', 'y', 't'};
+        params = {'A', 'wt', 'kx', 'ky', 'x', 'y', 't'};
+        aliases = struct('w', 'wt');
     case 'linear'
-        symbols = {'A', 'D', 'h', 'wt', 'kx', 'ky', 'x', 'y', 't', 'V'};
-    case 'nonlinear'
-        symbols = {'A', 'I', 'V'};
+        params = {'A', 'D', 'h', 'wt', 'kx', 'ky', 'x', 'y', 't', 'V'};
+        aliases = struct('w', 'wt');
     case 'potential'
-        symbols = {'x', 'y', 't', 'wt', 'kx', 'ky'};
+        params = {'x', 'y', 't'};
+        aliases = struct();
+    case 'nonlinear'
+        params = {'A', 'I', 'V'};
+        aliases = struct();
     otherwise
-        error('nlolib:invalidOperatorSpec', 'unknown operator context "%s"', context);
+        error('nlolib:invalidOperator', 'unknown operator context "%s"', context);
 end
-if nargin < 3
-    runtime = struct();
+allSymbols = {'A', 'I', 'D', 'V', 'h', 'w', 'wt', 'kx', 'ky', 'x', 'y', 't'};
+if nargin < 3 || isempty(bindings)
+    bindings = struct();
 end
 
 handleText = char(func2str(fn));
-[argNames, body] = parse_handle_text(handleText);
-if numel(argNames) < 1 || numel(argNames) > numel(symbols)
-    error('nlolib:invalidOperatorSpec', ...
-          '%s handle must take 1 to %d arguments (%s)', ...
-          context, numel(symbols), strjoin(symbols, ', '));
+[argNames, body] = parse_handle_text(handleText, context);
+if numel(argNames) < 1 || numel(argNames) > numel(params)
+    error('nlolib:invalidOperator', ...
+          '%s operator must take 1 to %d arguments (%s).', ...
+          context, numel(params), strjoin(params, ', '));
 end
 
-symbolMap = containers.Map("KeyType", "char", "ValueType", "char");
-used = false(1, numel(symbols));
+% Arguments named after a symbol (or an alias of one) bind to it first; the
+% others then take the unused symbols in parameter order, so @(B, A) binds A
+% to A and B to the next symbol.
+symbolMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
+used = false(1, numel(params));
 for idx = 1:numel(argNames)
-    hit = find(strcmp(symbols, argNames{idx}) & ~used, 1);
-    if isempty(hit)
-        hit = find(~used, 1);
+    name = argNames{idx};
+    target = name;
+    if isfield(aliases, name)
+        target = aliases.(name);
     end
-    symbolMap(argNames{idx}) = symbols{hit};
+    hit = find(strcmp(params, target), 1);
+    if isempty(hit)
+        continue;
+    end
+    if used(hit)
+        % e.g. @(A, w, wt) in a tensor run, where w is wt. Binding the second
+        % one elsewhere would silently rename every later argument.
+        error('nlolib:invalidOperator', ...
+              '%s operator: arguments ''%s'' and ''%s'' both name %s.', ...
+              context, symbol_owner(symbolMap, target), name, target);
+    end
+    symbolMap(name) = target;
     used(hit) = true;
+end
+for idx = 1:numel(argNames)
+    name = argNames{idx};
+    if ~isKey(symbolMap, name)
+        hit = find(~used, 1);
+        symbolMap(name) = params{hit};
+        used(hit) = true;
+    end
 end
 
 body = strrep(body, ".^", "^");
@@ -83,27 +110,15 @@ body = strrep(body, "./", "/");
 body = regexprep(body, "(?<![A-Za-z0-9_.])1(\.0+)?[iIjJ]\>", "i");
 body = regexprep(body, "(?<![A-Za-z0-9_.])(\d+\.?\d*([eE][+-]?\d+)?)[iIjJ]\>", "($1*i)");
 
-bindings = struct();
-if isfield(runtime, "constant_bindings") && ~isempty(runtime.constant_bindings)
-    bindings = runtime.constant_bindings;
-end
-autoCapture = true;
-if isfield(runtime, "auto_capture_constants")
-    autoCapture = logical(runtime.auto_capture_constants);
-end
 workspaceScope = resolve_workspace_scope(fn);
-
 constants = [];
-constantsByName = containers.Map("KeyType", "char", "ValueType", "double");
-function token = addConstant(name, value)
-    if ~isfinite(value)
-        error('nlolib:invalidOperatorSpec', "captured constant '%s' must be finite", name);
-    end
-    if isKey(constantsByName, name)
-        idxLocal = constantsByName(name);
+constantsByName = containers.Map('KeyType', 'char', 'ValueType', 'double');
+function token = addConstant(key, value)
+    if isKey(constantsByName, key)
+        idxLocal = constantsByName(key);
     else
         idxLocal = numel(constants);
-        constantsByName(name) = idxLocal;
+        constantsByName(key) = idxLocal;
         constants(end + 1) = value; %#ok<AGROW>
     end
     token = sprintf('c%d', idxLocal);
@@ -119,90 +134,104 @@ for idx = 1:numel(names)
         names{idx} = symbolMap(name);
         continue;
     end
-    % Symbols and intrinsics understood by the runtime expression compiler
-    % (parse_primary in src/physics/operator_program_compile.c) pass through.
-    if ismember(name, {'w', 'wt', 'kx', 'ky', 't', 'x', 'y', ...
-                       'A', 'I', 'D', 'V', 'h', 'i', ...
-                       'exp', 'log', 'sqrt', 'sin', 'cos'})
+    if ismember(name, {'i', 'exp', 'log', 'sqrt', 'sin', 'cos'})
         continue;
     end
+    if ismember(name, params)
+        continue;
+    end
+    if isfield(aliases, name)
+        names{idx} = aliases.(name);
+        continue;
+    end
+    if ismember(name, allSymbols)
+        error('nlolib:invalidOperator', ...
+              '''%s'' is not a symbol of %s operators; they take %s.', ...
+              name, context, strjoin(params, ', '));
+    end
 
-    [hasBinding, boundValue] = lookup_binding(bindings, name);
+    [hasBinding, value] = lookup_binding(bindings, name);
     if hasBinding
-        if ~(isnumeric(boundValue) && isscalar(boundValue) && isreal(boundValue))
-            error('nlolib:invalidOperatorSpec', ...
-                  "constant binding '%s' must be a real scalar", name);
-        end
-        names{idx} = addConstant(['binding:' name], double(boundValue));
+        names{idx} = addConstant(['binding:' name], real_constant(value, name, 'constant_bindings'));
         continue;
     end
-
-    if autoCapture && isfield(workspaceScope, name)
-        value = workspaceScope.(name);
-        if ~(isnumeric(value) && isscalar(value) && isreal(value))
-            error('nlolib:invalidOperatorSpec', ...
-                  "captured variable '%s' must be a real scalar", name);
-        end
-        names{idx} = addConstant(name, double(value));
+    if isfield(workspaceScope, name)
+        names{idx} = addConstant(name, real_constant(workspaceScope.(name), name, 'captured'));
         continue;
     end
-
-    error('nlolib:invalidOperatorSpec', ...
-          "unknown identifier '%s' in %s handle", name, context);
+    error('nlolib:invalidOperator', ...
+          'unknown identifier ''%s'' in the %s operator; define it before the handle or pass it in constant_bindings.', ...
+          name, context);
 end
 
 pieces = [gaps; [names, {''}]];
 expression = char(strjoin(pieces(:).', ''));
 end
 
-function [argNames, body] = parse_handle_text(handleText)
-tokenized = regexp(handleText, "^@\(([^)]*)\)\s*(.+)$", "tokens", "once");
-if ~isempty(tokenized)
-    argsRaw = strtrim(tokenized{1});
-    body = strtrim(tokenized{2});
-    if strlength(argsRaw) == 0
-        argNames = {};
-        return;
-    end
-    parts = split(string(argsRaw), ",");
-    argNames = cellstr(strtrim(parts)).';
-    return;
+function name = symbol_owner(symbolMap, symbol)
+names = keys(symbolMap);
+name = names{find(strcmp(values(symbolMap), symbol), 1)};
 end
 
-tokenized = regexp(handleText, "^@([A-Za-z_]\w*)\s*(.+)$", "tokens", "once");
-if ~isempty(tokenized)
-    argNames = {strtrim(tokenized{1})};
-    body = strtrim(tokenized{2});
-    return;
+function [argNames, body] = parse_handle_text(text, context)
+tokens = regexp(text, '^@\(([^)]*)\)\s*(.+)$', 'tokens', 'once');
+if isempty(tokens)
+    error('nlolib:invalidOperator', ...
+          '%s operator must be an anonymous function such as @(A, w) ..., got %s.', context, text);
+end
+argNames = strtrim(strsplit(tokens{1}, ','));
+argNames = argNames(~cellfun(@isempty, argNames));
+body = strtrim(tokens{2});
 end
 
-error('nlolib:invalidOperatorSpec', "unable to parse operator handle text '%s'", handleText);
+function value = real_constant(value, name, source)
+if ~(isnumeric(value) && isscalar(value) && isreal(value) && isfinite(value))
+    error('nlolib:invalidOperator', ...
+          '%s constant ''%s'' must be a finite real scalar.', source, name);
+end
+value = double(value);
 end
 
 function scope = resolve_workspace_scope(fn)
 scope = struct();
-info = functions(fn);
-if isfield(info, "workspace") && ~isempty(info.workspace)
-    firstScope = info.workspace{1};
-    if isstruct(firstScope)
-        scope = firstScope;
+try
+    info = functions(fn);
+catch
+    return;
+end
+if ~isfield(info, 'workspace') || isempty(info.workspace)
+    return;
+end
+workspace = info.workspace;
+if iscell(workspace)
+    for idx = 1:numel(workspace)
+        if isstruct(workspace{idx})
+            scope = merge_structs(scope, workspace{idx});
+        end
     end
+elseif isstruct(workspace)
+    scope = merge_structs(scope, workspace);
+end
+end
+
+function out = merge_structs(base, extra)
+out = base;
+names = fieldnames(extra);
+for idx = 1:numel(names)
+    out.(names{idx}) = extra.(names{idx});
 end
 end
 
 function [found, value] = lookup_binding(bindings, name)
 found = false;
 value = [];
-if isempty(bindings)
-    return;
-end
-if isstruct(bindings) && isfield(bindings, name)
+if isa(bindings, 'containers.Map')
+    if isKey(bindings, name)
+        found = true;
+        value = bindings(name);
+    end
+elseif isstruct(bindings) && isfield(bindings, name)
     found = true;
     value = bindings.(name);
-    return;
-end
-if isa(bindings, "containers.Map") && isKey(bindings, name)
-    found = true;
-    value = bindings(name);
 end
 end

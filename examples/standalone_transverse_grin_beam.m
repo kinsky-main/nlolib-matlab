@@ -23,7 +23,7 @@
 %
 %   Lengths are in micrometres.
 
-if exist("nlolib.NLolib", "class") ~= 8
+if isempty(which("nlolib.propagate"))
     error("nlolib is not on the MATLAB path. Install nlolib.mltbx, or run " + ...
           "addpath('<repo>/build/matlab_toolbox'); nlolib_setup();");
 end
@@ -59,7 +59,7 @@ field0    = exp(-(((xx - xOffset).^2 + yy.^2) / wMatched^2));
 field0    = complex(field0, zeros(size(field0)));
 potential = grinDepth * (xx.^2 + yy.^2);
 
-% nlolib's tensor layout (TENSOR_LAYOUT_XYT_T_FAST) is t fastest, then y, then
+% nlolib's tensor layout is t fastest, then y, then
 % x; with tensor_nt = 1 that is y fastest, which is exactly MATLAB's own
 % ordering for an (ny, nx) array, so the sheet flattens with a plain reshape.
 flatten = @(m) reshape(m, 1, []);
@@ -70,7 +70,6 @@ pulse.samples        = flatten(field0);
 pulse.tensor_nt      = 1;                        % purely transverse: no time axis
 pulse.tensor_nx      = nx;
 pulse.tensor_ny      = ny;
-pulse.tensor_layout  = 0;                        % 0 = row-major t,y,x
 pulse.delta_x        = dx;
 pulse.delta_y        = dy;
 pulse.delta_time     = 1.0;                      % unused when tensor_nt == 1
@@ -78,20 +77,18 @@ pulse.pulse_period   = 1.0;                      % unused when tensor_nt == 1
 pulse.frequency_grid = complex(0.0, 0.0);        % one entry per tensor_nt
 pulse.potential_grid = flatten(complex(potential, zeros(size(potential))));
 
-linearOperator    = @(A, w, wt, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
+linearOperator    = @(A, wt, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
 nonlinearOperator = @(A, I, V) 1i * A .* V;       % GRIN potential only, no Kerr
 
-options = struct();
-options.propagation_distance = zFinal;
-options.records              = numRecords;
-options.preset               = "accuracy";       % "fast" | "balanced" | "accuracy"
-% options.exec_options = struct('backend_type', 0);   % 0 = CPU, 1 = Vulkan, 2 = auto
-
 % ----------------------------------------------------------------- propagate
-api = nlolib.NLolib();
 
 tic;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance = zFinal, ...
+    num_records          = numRecords, ...
+    preset               = "accuracy");       % "fast" | "balanced" | "accuracy"
+% Add exec_options = struct('backend_type', "cpu") to pick a backend
+% ("cpu", "vulkan" or "auto").
 elapsed = toc;
 
 recordsFlat = result.records;

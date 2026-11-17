@@ -3,7 +3,6 @@ function grin_fiber_xy_rk4ip()
 
 setup_matlab_example_environment();
 
-api = nlolib.NLolib();
 simOptions = backend.default_simulation_options( ...
     "backend", "auto", ...
     "fft_backend", "auto", ...
@@ -27,13 +26,13 @@ scenarios = { ...
 allSaved = strings(0, 1);
 for idx = 1:numel(scenarios)
     [savedPaths, finalError, powerDrift] = run_phase_validation( ...
-        api, scenarios{idx}, simOptions, outputRoot);
+        scenarios{idx}, simOptions, outputRoot);
     fprintf("%s: final_error=%.6e power_drift=%.6e\n", ...
             scenarios{idx}.scenario_name, finalError, powerDrift);
     allSaved = [allSaved; savedPaths(:)]; %#ok<AGROW>
 end
 
-[proofSaved, proofError] = run_diffraction_operator_proof_check(api, simOptions, outputRoot);
+[proofSaved, proofError] = run_diffraction_operator_proof_check(simOptions, outputRoot);
 fprintf("diffraction_operator_proof_check: final_error=%.6e\n", proofError);
 if ~isempty(proofSaved)
     allSaved = [allSaved; string(proofSaved)]; %#ok<AGROW>
@@ -44,7 +43,7 @@ for idx = 1:numel(allSaved)
 end
 end
 
-function [savedPaths, finalError, powerDrift] = run_phase_validation(api, scenario, simOptions, outputRoot)
+function [savedPaths, finalError, powerDrift] = run_phase_validation(scenario, simOptions, outputRoot)
 nx = scenario.nx;
 ny = scenario.ny;
 numRecords = scenario.num_records;
@@ -67,7 +66,6 @@ pulse.frequency_grid = complex(zeros(1, nxy), zeros(1, nxy));
 pulse.tensor_nt = 1;
 pulse.tensor_nx = nx;
 pulse.tensor_ny = ny;
-pulse.tensor_layout = 0;
 pulse.delta_x = scenario.dx;
 pulse.delta_y = scenario.dy;
 pulse.potential_grid = flatten_xy(complex(phaseUnit, zeros(size(phaseUnit))));
@@ -76,13 +74,11 @@ pulse.potential_grid = flatten_xy(complex(phaseUnit, zeros(size(phaseUnit))));
 linearOperator = @(A, w) 0 * w;
 nonlinearOperator = @(A, I, V) 1i * A .* V;
 
-execOptions = backend.make_exec_options(simOptions, numRecords);
-propagateOptions = struct();
-propagateOptions.propagation_distance = scenario.propagation_distance;
-propagateOptions.records = numRecords;
-propagateOptions.preset = "accuracy";
-propagateOptions.exec_options = execOptions;
-result = api.propagate(pulse, linearOperator, nonlinearOperator, propagateOptions);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=scenario.propagation_distance, ...
+    num_records=numRecords, ...
+    preset="accuracy", ...
+    exec_options=backend.make_exec_options(simOptions));
 recordsFlat = result.records;
 zRecords = result.z_axis;
 records = unflatten_xy_records(recordsFlat, numRecords, ny, nx);
@@ -172,7 +168,7 @@ fprintf("%s: records=%d, grid=(%d,%d), final_full_error=%.6e, final_profile_erro
         scenario.scenario_name, numRecords, ny, nx, finalError, finalProfileError, powerDrift);
 end
 
-function [savedPath, finalError] = run_diffraction_operator_proof_check(api, simOptions, outputRoot)
+function [savedPath, finalError] = run_diffraction_operator_proof_check(simOptions, outputRoot)
 nx = 128;
 ny = 128;
 dx = 0.7;
@@ -198,30 +194,27 @@ ky = backend.angular_frequency_grid(ny, dy);
 [kxx, kyy] = meshgrid(kx, ky);
 k2 = (kxx .* kxx) + (kyy .* kyy);
 
-execOptions = backend.make_exec_options(simOptions, numRecords);
+pulse = struct( ...
+    'samples', field0Flat, ...
+    'delta_time', 1.0, ...
+    'pulse_period', 1.0, ...
+    'tensor_nt', 1, ...
+    'tensor_nx', nx, ...
+    'tensor_ny', ny, ...
+    'delta_x', dx, ...
+    'delta_y', dy);
 
-cfgTensor = struct();
-cfgTensor.num_time_samples = nxy;
-cfgTensor.propagation_distance = propagationDistance;
-cfgTensor.starting_step_size = 1.0e-3;
-cfgTensor.max_step_size = 2.0e-3;
-cfgTensor.min_step_size = 5.0e-5;
-cfgTensor.error_tolerance = 1.0e-7;
-cfgTensor.pulse_period = 1.0;
-cfgTensor.delta_time = 1.0;
-cfgTensor.tensor_nt = 1;
-cfgTensor.tensor_nx = nx;
-cfgTensor.tensor_ny = ny;
-cfgTensor.tensor_layout = 0;
-cfgTensor.delta_x = dx;
-cfgTensor.delta_y = dy;
-cfgTensor.frequency_grid = complex(0.0, 0.0);
-cfgTensor.runtime = struct( ...
-    'linear_factor_fn', @(A, wt, kx, ky) 1i * diffractionCoeff * (kx.^2 + ky.^2), ...
-    'linear_fn', @(A, D, h) exp(h .* D), ...
-    'nonlinear_fn', @(A) 0);
-
-tensorResult = api.propagate(cfgTensor, field0Flat, numRecords, execOptions);
+tensorResult = nlolib.propagate(pulse, ...
+    @(A, wt, kx, ky) 1i * diffractionCoeff * (kx.^2 + ky.^2), ...
+    @(A) 0 * A, ...
+    propagation_distance=propagationDistance, ...
+    num_records=numRecords, ...
+    starting_step_size=1.0e-3, ...
+    max_step_size=2.0e-3, ...
+    min_step_size=5.0e-5, ...
+    error_tolerance=1.0e-7, ...
+    linear_step_operator=@(A, D, h) exp(h .* D), ...
+    exec_options=backend.make_exec_options(simOptions));
 tensorRecords = unflatten_xy_records(tensorResult.records, numRecords, ny, nx);
 zRecords = tensorResult.z_axis;
 
@@ -255,7 +248,7 @@ end
 
 function flat = flatten_xy(field)
 %FLATTEN_XY Flatten an (ny, nx) sheet into nlolib's tensor layout.
-%   TENSOR_LAYOUT_XYT_T_FAST is t fastest, then y, then x; with tensor_nt = 1
+%   nlolib's tensor layout is t fastest, then y, then x; with tensor_nt = 1
 %   that is y fastest, which is exactly MATLAB's own ordering for an (ny, nx)
 %   array, so the sheet flattens with a plain reshape.
 flat = reshape(field, 1, []);
