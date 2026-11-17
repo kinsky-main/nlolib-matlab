@@ -5,9 +5,19 @@ function [expression, constants] = translate_runtime_handle(fn, context, binding
 %   Private: the C API takes operators as expression strings, so
 %   nlolib.propagate lowers each operator handle through this function.
 %
-%   Each argument binds to a symbol of the context. An argument named after
-%   a symbol, or an alias of one, binds to that symbol; any other name binds
-%   to the next unused symbol in the context's parameter order:
+%   Arguments bind to the context's symbols (core tests/api_surface.json,
+%   operator_lowering.parameter_binding):
+%     (a) an argument named after one of the context's symbols, or an alias
+%         of one, binds to it, wherever it stands;
+%     (b) the other arguments take, left to right, the next unbound symbol in
+%         the parameter order below; more arguments than symbols is an error;
+%     (c) an argument named after a runtime symbol the context does not
+%         provide (kx in dispersion_factor) is an error, never rebound;
+%     (d) two arguments resolving to one symbol are an error;
+%     (e) w and wt are one symbol in the linear contexts, emitted in the
+%         context's own spelling;
+%     (f) runtime symbols enter only through arguments: a free name in the
+%         body is a captured constant, whatever it is called.
 %
 %     context              parameters                          alias
 %     "dispersion_factor"  @(A, w)                             wt = w
@@ -19,9 +29,9 @@ function [expression, constants] = translate_runtime_handle(fn, context, binding
 %
 %   The body must be a single expression. Element-wise operators are
 %   normalised (.* -> *, .^ -> ^, ./ -> /) and imaginary literals (1i, 0.5j)
-%   become multiples of i. A runtime symbol the context does not list is an
-%   error. Any other identifier, apart from the intrinsics exp, log, sqrt,
-%   sin and cos, is a real scalar constant: the value in bindings (a struct
+%   become multiples of i. Any identifier that is not an argument, apart
+%   from the intrinsics exp, log, sqrt, sin and cos and the unit i, is a real
+%   scalar constant: the value in bindings (a struct
 %   or containers.Map, the constant_bindings option) when it names one,
 %   otherwise the value the handle captured from its workspace. constants(k)
 %   is referenced as c<k-1>.
@@ -81,6 +91,11 @@ for idx = 1:numel(argNames)
     end
     hit = find(strcmp(params, target), 1);
     if isempty(hit)
+        if ismember(name, allSymbols)
+            error('nlolib:invalidOperator', ...
+                  '%s operator: ''%s'' is a runtime symbol %s operators do not have; they take %s.', ...
+                  context, name, context, strjoin(params, ', '));
+        end
         continue;
     end
     if used(hit)
@@ -136,18 +151,6 @@ for idx = 1:numel(names)
     end
     if ismember(name, {'i', 'exp', 'log', 'sqrt', 'sin', 'cos'})
         continue;
-    end
-    if ismember(name, params)
-        continue;
-    end
-    if isfield(aliases, name)
-        names{idx} = aliases.(name);
-        continue;
-    end
-    if ismember(name, allSymbols)
-        error('nlolib:invalidOperator', ...
-              '''%s'' is not a symbol of %s operators; they take %s.', ...
-              name, context, strjoin(params, ', '));
     end
 
     [hasBinding, value] = lookup_binding(bindings, name);

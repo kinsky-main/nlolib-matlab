@@ -72,7 +72,9 @@ function result = propagate(pulse, linear_operator, nonlinear_operator, options)
 %     progress_style        "inline" (one line redrawn) or "lines"
 %     stream_logs           print the runtime log buffer after the call
 %
-%   Records: with record_z, exactly those positions. Without it,
+%   Records: with record_z, exactly those positions (a single position
+%   still returns the final field with the current core, and z_axis says
+%   so). Without it,
 %   num_records = 1 returns the final field only and z_axis is
 %   [propagation_distance]; otherwise num_records uniformly spaced positions
 %   from 0 to propagation_distance.
@@ -215,6 +217,9 @@ ensure_types_loaded();
 
 storageEnabled = ~isempty(options.storage);
 if storageEnabled
+    if ~isstruct(options.storage) || ~isscalar(options.storage)
+        error('nlolib:invalidOption', 'storage must be a struct with sqlite_path.');
+    end
     if ~nlolib.storage_is_available()
         error('nlolib:unavailable', 'SQLite storage is not available in this nlolib build.');
     end
@@ -431,6 +436,11 @@ if ~isempty(options.record_z)
     numRecords = numel(recordZ);
     outputMode = 0;
     zAxis = recordZ;
+    if numRecords == 1
+        % Known core discrepancy: nlolib_propagate puts the final field in the
+        % only record whenever one record is requested, so report that z.
+        zAxis = zEnd;
+    end
     return;
 end
 if isempty(options.num_records)

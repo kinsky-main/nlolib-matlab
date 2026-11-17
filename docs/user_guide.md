@@ -270,11 +270,13 @@ Rules that matter in practice:
   and imaginary literals (`1i`, `0.5j`) become multiples of `i`. The body must
   be a single expression — no statements, no branching, no calls beyond the
   intrinsics above.
-- A symbol the run type does not have (`kx` in a temporal run, say) is an
-  `nlolib:invalidOperator` error before the library is called, and so are two
-  arguments for one symbol, such as `@(A, w, wt)`.
-- Any other identifier is captured from the handle's workspace as a real
-  scalar constant (here, `beta2` and `gamma`). A captured value that is
+- An argument named after a runtime symbol the run type does not have
+  (`@(A, kx)` in a temporal run, say) is an `nlolib:invalidOperator` error
+  before the library is called, and so are two arguments for one symbol, such
+  as `@(A, w, wt)`.
+- Runtime symbols enter only through arguments. Any other identifier in the
+  body, even one spelled like a symbol, is captured from the handle's
+  workspace as a real scalar constant (here, `beta2` and `gamma`). A captured value that is
   non-scalar, complex, or non-finite is an error, and so is a struct field:
   copy `cfg.gamma` into a local `gamma` before writing the handle.
 - `constant_bindings=struct('beta2', -0.01)` (or a `containers.Map`) names
@@ -330,7 +332,8 @@ result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
 
 A single `record_z` position is meant to return the field at that \f$z\f$. The
 core library this release builds against still returns the final field
-whenever exactly one record is requested.
+whenever exactly one record is requested, so `result.z_axis` is then
+`propagation_distance`, the position of the field actually returned.
 
 ### Presets
 
@@ -656,7 +659,7 @@ Every error the package raises carries one of seven identifiers:
 
 | Identifier | Cause | Fix |
 |---|---|---|
-| `nlolib:invalidOperator` | an operator that is not a function handle (strings included), or a handle the binding cannot lower: an unknown identifier, a symbol the run type does not have, two arguments for one symbol | see [Describing the Operators](#operators) |
+| `nlolib:invalidOperator` | an operator that is not a function handle (strings included), or a handle the binding cannot lower: an unknown identifier, an argument named after a symbol the run type does not have, two arguments for one symbol | see [Describing the Operators](#operators) |
 | `nlolib:invalidPulse` | missing `samples`/`delta_time`, an unknown pulse field, or a shape mismatch | `numel(samples)` must equal `tensor_nt*tensor_nx*tensor_ny` |
 | `nlolib:invalidOption` | a bad option value, including an unknown enum string or an integer where a string is expected, an unknown `exec_options`/`storage` field, more than 16 constants | the message names the option |
 | `nlolib:libraryLoadFailed` | no `nlolib.dll` / `libnlolib.so` found, or every candidate failed to load, or MATLAB's parsed type table is unusable | the message lists each library and the interface used (prototype or header); a header-parse failure means no prototype was staged and no compiler is set up — run `matlab/generate_library_prototype.m` or `mex -setup C`. For a stale type table run `nlolib.unload(); clear classes;` and check only one `nlolib` package is on the path |

@@ -83,6 +83,12 @@ verifyEqual(testCase, fieldnames(result.meta), ...
 verifyEqual(testCase, result.meta.status, "ok");
 verifyEqual(testCase, result.meta.backend_requested, "cpu");
 verifyEqual(testCase, result.meta.records_written, 4);
+verifyClass(testCase, result.meta.coupled, 'logical');
+% pulse, exec_options and storage are structs; anything else is rejected.
+verifyError(testCase, @() nlolib.propagate({gaussian_pulse(testCase)}, @(A, w) w, @(A) 0 * A, ...
+                                           propagation_distance=0.05), 'nlolib:invalidPulse');
+verifyError(testCase, @() run(testCase, exec_options={'backend_type', "cpu"}), 'nlolib:invalidOption');
+verifyError(testCase, @() run(testCase, storage="run.sqlite"), 'nlolib:invalidOption');
 verifyEmpty(testCase, result.step_history);
 verifyEmpty(testCase, result.storage_result);
 end
@@ -101,18 +107,15 @@ verifyEqual(testCase, result.z_axis, recordZ, 'AbsTol', 1e-12);
 verifyEqual(testCase, result.records(1, :), gaussian_pulse(testCase).samples, 'AbsTol', 1e-12);
 end
 
-function testSingleRecordZIsDenseOutput(testCase)
-% One record_z position is dense output at that z, not the final field.
-dense = run(testCase, record_z=[0.0, 0.01]);
+function testSingleRecordZReportsTheFieldReturned(testCase)
+% Known core discrepancy (core docs/binding_api_vocabulary.md): with one
+% record requested, nlolib_propagate returns the field at
+% propagation_distance whatever the position, so z_axis must say that.
+final = run(testCase, num_records=1);
 mid = run(testCase, record_z=0.01);
 verifySize(testCase, mid.records, [1, testCase.TestData.n]);
-verifyEqual(testCase, mid.z_axis, 0.01);
-% Known core limitation: nlolib_propagate overwrites the only record with the
-% final field whenever one record is requested (src/nlolib.c), whatever the
-% output mode, so this binding passes the position as the manifest says and
-% the record is still the z = propagation_distance field.
-assumeLessThan(testCase, max(abs(mid.final - dense.final)), 1e-6, ...
-               'core returns the final field for a single record_z position');
+verifyEqual(testCase, mid.z_axis, 0.05);
+verifyEqual(testCase, mid.final, final.final, 'AbsTol', 1e-12);
 end
 
 function testShortRecordCountIsTruncatedNotAnError(testCase)
@@ -163,6 +166,7 @@ verifyEmpty(testCase, result.records);
 verifyEqual(testCase, result.storage_result.run_id, "smoke");
 verifyEqual(testCase, result.storage_result.records_captured, 8);
 verifyGreaterThan(testCase, result.storage_result.db_size_bytes, 0);
+verifyClass(testCase, result.storage_result.truncated, 'logical');
 verifyError(testCase, @() run(testCase, storage=struct('sqlite_path', path, 'return_records', false)), ...
             'nlolib:invalidOption');
 verifyError(testCase, @() run(testCase, storage=struct('sqlite_path', path, 'cap_policy', 1)), ...
@@ -182,6 +186,7 @@ verifyEqual(testCase, fieldnames(limits), ...
              'max_num_recorded_samples_with_storage'; 'estimated_required_working_set_bytes'; ...
              'estimated_device_budget_bytes'; 'storage_available'});
 verifyGreaterThan(testCase, double(limits.max_num_recorded_samples_in_memory), 0);
+verifyClass(testCase, limits.storage_available, 'logical');
 verifyGreaterThan(testCase, double(nlolib.query_runtime_limits().max_num_time_samples_runtime), 0);
 end
 

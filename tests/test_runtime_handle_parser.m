@@ -35,48 +35,68 @@ verifyEqual(testCase, expr, 'i*(c0*(w^2)+c1*(w^3)+c2*(w^4))');
 verifyEqual(testCase, constants, [beta2, beta3, beta4], "AbsTol", 0.0);
 end
 
-function testArgumentsBindByNameThenPosition(testCase)
-% Any names bind in parameter order; a symbol name binds to that symbol even
-% out of order, and an argument renamed to a symbol is not renamed again.
-verifyEqual(testCase, lower(testCase, @(field, omega) 1i * omega .^ 2 .* 0 + field .* 0, ...
-                            'dispersion_factor'), 'i*w^2*0+A*0');
+% --- argument binding: operator_lowering.parameter_binding, rules (a)-(f) ---
+
+function testRuleA_NamedArgumentsBindFirst(testCase)
+% (B, A) in dispersion_factor: A binds to A by name, wherever it stands.
+verifyEqual(testCase, lower(testCase, @(B, A) A + 2 * B, 'dispersion_factor'), 'A+2*w');
 verifyEqual(testCase, lower(testCase, @(V, A, I) 1i * A .* (I + V), 'nonlinear'), 'i*A*(I+V)');
-verifyEqual(testCase, lower(testCase, @(A, wt, kx, ky) 1i * (wt .^ 2 + kx .^ 2 + ky .^ 2), ...
-                            'linear_factor'), 'i*(wt^2+kx^2+ky^2)');
 verifyEqual(testCase, lower(testCase, @(A, D, h) exp(h .* D), 'dispersion'), 'exp(h*D)');
-verifyEqual(testCase, lower(testCase, @(x, y) x .^ 2 + y .^ 2, 'potential'), 'x^2+y^2');
-% Named arguments bind first, wherever they are; the rest fill in order.
-verifyEqual(testCase, lower(testCase, @(B, A) A + B, 'dispersion_factor'), 'A+w');
+verifyEqual(testCase, lower(testCase, @(ky, kx, A) kx + ky, 'linear_factor'), 'kx+ky');
 end
 
-function testTwoArgumentsForOneSymbolRejected(testCase)
-% In a tensor run w is wt, so the old @(A, w, wt, kx, ky) signature would bind
-% wt twice; shifting it would silently rename kx to ky and ky to x.
+function testRuleB_OtherArgumentsTakeTheNextUnboundSymbol(testCase)
+% (A, omega): omega is not a runtime symbol, so it takes the next unbound
+% symbol, w in a temporal run and wt in a tensor run.
+verifyEqual(testCase, lower(testCase, @(A, omega) omega .^ 2, 'dispersion_factor'), 'w^2');
+verifyEqual(testCase, lower(testCase, @(A, omega) omega .^ 2, 'linear_factor'), 'wt^2');
+verifyEqual(testCase, lower(testCase, @(field, omega) 1i * omega .^ 2 .* 0 + field .* 0, ...
+                            'dispersion_factor'), 'i*w^2*0+A*0');
+verifyEqual(testCase, lower(testCase, @(p, q) p + q, 'potential'), 'x+y');
+% More arguments than the context has symbols.
+verifyError(testCase, @() lower(testCase, @(A, w, a) w, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
+end
+
+function testRuleC_SymbolTheContextLacksIsAnError(testCase)
+% (A, kx) in dispersion_factor is an error, not rebound positionally.
+verifyError(testCase, @() lower(testCase, @(A, kx) kx, 'dispersion_factor'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, I) A .* I, 'linear_factor'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(A, t) A .* t, 'nonlinear'), ...
+            'nlolib:invalidOperator');
+verifyError(testCase, @() lower(testCase, @(x, wt) x + wt, 'potential'), ...
+            'nlolib:invalidOperator');
+end
+
+function testRuleD_TwoArgumentsForOneSymbolIsAnError(testCase)
+% (A, w, wt, kx, ky) in linear_factor: w and wt resolve to the same symbol.
 verifyError(testCase, @() lower(testCase, @(A, w, wt, kx, ky) kx + ky, 'linear_factor'), ...
             'nlolib:invalidOperator');
 verifyError(testCase, @() lower(testCase, @(A, w, wt) w, 'dispersion_factor'), ...
             'nlolib:invalidOperator');
 end
 
-function testWAndWtAreAliasesInLinearContexts(testCase)
-% One linear operator written as @(A, w) works for both run types.
-verifyEqual(testCase, lower(testCase, @(A, w) 1i * w .^ 2, 'linear_factor'), 'i*wt^2');
+function testRuleE_WAndWtAreOneSymbolInLinearContexts(testCase)
+% (A, w, kx, ky) in linear_factor is A, wt, kx, ky: w is written as wt.
+verifyEqual(testCase, lower(testCase, @(A, w, kx, ky) w + kx + ky, 'linear_factor'), 'wt+kx+ky');
 verifyEqual(testCase, lower(testCase, @(A, wt) 1i * wt .^ 2, 'dispersion_factor'), 'i*w^2');
 verifyEqual(testCase, lower(testCase, @(A, D, h, w) exp(h .* D) + w, 'linear'), 'exp(h*D)+wt');
-verifyEqual(testCase, lower(testCase, @(A, kx, w) kx + w, 'linear_factor'), 'kx+wt');
+verifyEqual(testCase, lower(testCase, @(A, D, h, wt) exp(h .* D) + wt, 'dispersion'), 'exp(h*D)+w');
 end
 
-function testSymbolsOutsideTheContextAreRejected(testCase)
-% The C parser rejects these; the binding reports them before the C call.
-verifyError(testCase, @() lower(testCase, @(A, w) 1i * w .^ 2 + kx, 'dispersion_factor'), ...
-            'nlolib:invalidOperator');
-verifyError(testCase, @() lower(testCase, @(A, w) w + t, 'dispersion'), ...
-            'nlolib:invalidOperator');
-verifyError(testCase, @() lower(testCase, @(x, y) x + wt, 'potential'), ...
-            'nlolib:invalidOperator');
-verifyError(testCase, @() lower(testCase, @(A, I) A .* I + t, 'nonlinear'), ...
-            'nlolib:invalidOperator');
-verifyError(testCase, @() lower(testCase, @(A, w, a, b) w, 'dispersion_factor'), ...
+function testRuleF_FreeNamesAreConstantsWhateverTheirName(testCase)
+% A free name in the body is a captured constant, even one spelled like a
+% runtime symbol; without a value it is an unknown identifier.
+kx = 0.25;
+[expr, constants] = lower(testCase, @(A, w) w + kx, 'dispersion_factor');
+verifyEqual(testCase, expr, 'w+c0');
+verifyEqual(testCase, constants, kx, "AbsTol", 0.0);
+[expr, constants] = lower(testCase, @(A) A .* w, 'dispersion_factor', struct('w', 2.0));
+verifyEqual(testCase, expr, 'A*c0');
+verifyEqual(testCase, constants, 2.0, "AbsTol", 0.0);
+verifyError(testCase, @() lower(testCase, @(A) A .* t, 'linear_factor'), ...
             'nlolib:invalidOperator');
 end
 
