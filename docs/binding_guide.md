@@ -1,7 +1,9 @@
 # MATLAB Binding Guide
 
-The MATLAB package exposes the native wrapper through the class
-`nlolib.NLolib`, using `loadlibrary`/`calllib` with no Python or MEX dependency.
+The MATLAB package exposes the native library as plain package functions
+(`nlolib.propagate`, `nlolib.load`, ...), using `loadlibrary`/`calllib` with no
+Python dependency. Its public surface is the vocabulary shared with the Python
+and Julia packages (core `docs/binding_api_vocabulary.md`).
 
 For the full walkthrough — pulse and operator specifications, options,
 telemetry, coupled 2D/3D runs, logging, storage, and troubleshooting — see the
@@ -27,7 +29,7 @@ cmake --build build --config Release --target matlab_stage
 ```matlab
 addpath('build/matlab_toolbox');
 nlolib_setup();
-api = nlolib.NLolib();
+nlolib.load();   % optional; the first nlolib call loads the library
 ```
 
 Requires MATLAB R2023b or later and nothing else — no C compiler, no Visual C++
@@ -77,27 +79,26 @@ N(A)=i\gamma A|A|^2
 \f]
 
 written as function handles. The scalars the handles use are captured as
-runtime constants when the config is lowered:
+runtime constants when the run starts:
 
 ```matlab
 beta2 = -0.02;
 alpha = 0.10;
 gamma = 1.20;
 
-cfg.runtime.dispersion_factor_fn = @(A, w) 1i * (beta2 / 2) * w.^2 - alpha / 2;
-cfg.runtime.nonlinear_fn         = @(A, I) 1i * gamma * A .* I;
-
-api = nlolib.NLolib();
+linearOperator    = @(A, w) 1i * (beta2 / 2) * w.^2 - alpha / 2;
+nonlinearOperator = @(A, I) 1i * gamma * A .* I;
 ```
 
-The C API takes operators as expression strings; `prepare_sim_config` lowers
-each handle to one privately (`+nlolib/private/translate_runtime_handle.m`).
-Strings are not accepted from users.
+The C API takes operators as expression strings; `nlolib.propagate` lowers
+each handle to one privately (`+nlolib/private/translate_runtime_handle.m`),
+in the C context the run type compiles: `dispersion_factor` for a temporal
+run, `linear_factor` for a tensor run. Strings are not accepted from users.
 
 ## Quick Start
 
-The high-level entry point derives the solver schedule from a preset, so a run
-needs only a pulse, two operators, and a propagation distance:
+`nlolib.propagate` derives the solver schedule from a preset, so a run needs
+only a pulse, two operators, and a propagation distance:
 
 ```matlab
 n  = 512;
@@ -113,24 +114,13 @@ gamma = 0.01;
 linearOperator    = @(A, w) 1i * beta2 * w.^2;
 nonlinearOperator = @(A, I) 1i * gamma * A .* I;
 
-options = struct('propagation_distance', 1.0, ...
-                 'records',              128, ...
-                 'preset',               "balanced");
-
-api    = nlolib.NLolib();
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=1.0, num_records=128, preset="balanced");
 
 imagesc(t, result.z_axis, abs(result.records).^2);
 ```
 
-The equivalent low-level call passes a flat config struct straight through:
-
-```matlab
-result = api.propagate(cfg, field0, 128, struct('backend_type', 2));
-```
-
-Both forms are documented in
-[The Two API Levels](user_guide.md#levels).
+Every option is documented in [Propagation Options](user_guide.md#options).
 
 ## Checking Whether the GPU JIT Ran
 
@@ -139,11 +129,11 @@ at runtime, and falls back to the interpreter when it cannot be. The fallback is
 silent: results stay correct, only slower. Two counters say which happened.
 
 ```matlab
-api = nlolib.NLolib();
-api.perf_profile_reset();
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+nlolib.perf_profile_reset();
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=1.0, exec_options=struct('backend_type', "vulkan"));
 
-snapshot = api.perf_profile_read();
+snapshot = nlolib.perf_profile_read();
 fprintf('%d JIT programs, %d interpreter fallbacks\n', ...
         snapshot.operator_jit_programs, snapshot.operator_jit_fallbacks);
 ```
@@ -156,31 +146,33 @@ program falling back. See [GPU backend behaviour](../../docs/gpu_backend.md).
 
 ## Examples
 
-Self-contained scripts that run against an installed toolbox:
-
-- [`examples/standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m)
-  — transverse x-y propagation with a GRIN potential grid.
-- [`examples/standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m)
-  — coupled 3+1D Kerr propagation validated against Gaussian beam/pulse laws.
-- [`examples/grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m)
-  — higher-order soliton fission in the fundamental mode of a GRIN fibre.
-
-Repo-helper examples (run `addpath('examples')` first) cover callable
-runtime operators, soliton and linear-drift validation, GRIN fibre transverse
-phase, and coupled dispersion/nonlinearity/diffraction. The full index is in the
+`examples/` holds the shared example set: twelve problems defined once in
+the core's `tests/api_surface.json` and implemented in each binding. Each file
+carries its numbers in a parameter block between the
+`nlolib-example-parameters: begin` and `end` comments, which the core's
+`tools/check_api_parity.py` compares with the manifest, and prints its metrics
+with `backend.report_metric` under the shared labels. The index is in the
 [user guide](user_guide.md#examples).
 
 ## Public API Entry Points
 
 | Symbol | Purpose |
 |---|---|
-| `nlolib.NLolib` | wrapper class: `propagate`, `query_runtime_limits`, logging, progress, perf counters, storage availability |
-| `nlolib.constants` | C API enum values and limits by name, matching the Python and Julia packages |
-| `nlolib.tensor_record_view` | coupled record row → `(nt, ny, nx)` volume |
-| `nlolib.prepare_sim_config` | MATLAB config struct → `simulation_config` / `runtime_operator_params` libstructs |
-| `nlolib.pack_complex_array` | complex vector → `nlo_complex*` buffer |
-| `nlolib.unpack_records` | `nlo_complex*` records → complex matrix |
+| `nlolib.propagate` | run a propagation; options by name |
+| `nlolib.query_runtime_limits` | memory and record limits for a pulse |
+| `nlolib.tensor_record_view` | one tensor-run record → `(nt, ny, nx)` volume |
+| `nlolib.load`, `nlolib.unload`, `nlolib.loaded_library_path` | the shared library |
+| `nlolib.storage_is_available` | SQLite storage built in |
+| `nlolib.set_log_*`, `clear_log_buffer`, `read_log_buffer` | runtime logging |
+| `nlolib.set_progress_options`, `set_progress_stream` | progress bar |
+| `nlolib.perf_profile_*` | performance counters |
 | `nlolib_setup` | add package, examples, and library directories to the MATLAB path |
+
+Everything else is in `+nlolib/private`: the config builder
+(`prepare_sim_config`), the complex buffer helpers (`pack_complex_array`,
+`unpack_records`), the handle lowering, and the string-to-C-integer tables
+(`enum_table`). Enum-style values are lowercase strings on the public surface;
+there are no integer constants.
 
 ## Tests
 
@@ -188,20 +180,23 @@ phase, and coupled dispersion/nonlinearity/diffraction. The full index is in the
 |---|---|---|
 | `test_matlab_binding_types` | no | Every `libstruct('T')`/`libpointer('TPtr')` name resolves to a typedef in the core's `src/nlolib_matlab.h` |
 | `test_matlab_header_abi` | no | Compile-time `sizeof`/`offsetof` parity between `nlolib_matlab.h` and the canonical headers |
-| `test_api_parity` | no | Every API constant agrees in name and value across the Python, Julia and MATLAB sources (`tests/api_parity.json` in the core repository) |
-| `test_matlab_bindings` | yes | Runtime-handle translation, the public package surface, plus an end-to-end FFI smoke suite (propagate, step history, runtime limits, log buffer, perf counters) |
+| `test_matlab_bindings` | yes | Runtime-handle lowering and argument checks, the public package surface, plus an end-to-end FFI smoke suite (propagate, record selection, step history, storage, runtime limits, log buffer, perf counters) |
+
+The core's `tools/check_api_parity.py --bindings matlab --surface report`
+compares this package's sources with the shared surface manifest
+(`tests/api_surface.json` in the core repository).
 
 Run the MATLAB-free checks alone with:
 
 ```bash
-ctest --test-dir build -R "test_matlab_binding_types|test_matlab_header_abi|test_api_parity"
+ctest --test-dir build -R "test_matlab_binding_types|test_matlab_header_abi"
 ```
 
 ## Design Notes
 
 `libstruct(TYPE)` with no initialiser creates an *empty* object that `calllib`
 marshals as `NULL`; output-parameter calls must use
-`NLolib.zeroed_libstruct()`. Reading `.Value` on a struct pointer returns only
+`zeroed_libstruct()` (private). Reading `.Value` on a struct pointer returns only
 the first element, and `setdatatype()` rejects struct pointers outright, so
 array read-back uses pointer arithmetic (`ptr = ptr + 1`).
 

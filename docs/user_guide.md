@@ -5,18 +5,18 @@ it, how to describe a problem, how to run it, and how to read the result. The
 symbol-level reference lives in @ref matlab_binding; the mathematics of the
 runtime operators is in [Runtime Operator Mathematics](../../docs/runtime_operators.md).
 
-Everything below runs against `nlolib.NLolib`, a thin `loadlibrary`/`calllib`
-wrapper over the native shared library. There is no Python or MEX dependency.
+Everything below is the `nlolib` package: plain functions over the native
+shared library, called through `loadlibrary`/`calllib`. There is no client
+object and no Python dependency. The same functions, option names and string
+values exist in the Python and Julia packages.
 
 - [Install and Verify](#install)
-- [The Two API Levels](#levels)
 - [Quick Start](#quickstart)
 - [Describing the Pulse](#pulse)
 - [Describing the Operators](#operators)
 - [Propagation Options](#options)
 - [Reading the Result](#result)
 - [Coupled 2D and 3D Runs](#tensor)
-- [Low-Level Configuration API](#lowlevel)
 - [Solver Telemetry and Step History](#telemetry)
 - [Logging, Progress, and Perf Counters](#logging)
 - [Sizing a Run with query_runtime_limits](#limits)
@@ -119,65 +119,42 @@ resolve `nlolib.dll`. Pass `nlolib_setup(true)` to persist the path with
 
 ### Library discovery
 
-The constructor searches, in order:
+Every `nlolib` function loads the library on first use, searching in order:
 
-1. an explicit path — `nlolib.NLolib('C:\path\to\nlolib.dll')`;
-2. the `NLOLIB_LIBRARY` environment variable;
-3. staged and build-tree locations relative to the package
+1. the `NLOLIB_LIBRARY` environment variable;
+2. staged and build-tree locations relative to the package
    (`lib/`, `build/matlab_toolbox/lib/`, `build/src/<config>/`, `python/`, ...),
    newest file first.
 
-Set the override from MATLAB with `setenv('NLOLIB_LIBRARY', ...)` before
-constructing the object.
+`nlolib.load(path)` loads a specific library instead (and unloads a different
+one that is already loaded). `nlolib.loaded_library_path()` says which one is in
+use. MATLAB keeps a loaded library until `nlolib.unload()`, which is needed to
+rebuild or replace it within one session.
 
 ### Verify the install
 
 ```matlab
-api = nlolib.NLolib();          % throws if the library cannot be loaded
-disp(api.query_runtime_limits); % prints device budget and record limits
-disp(api.storage_is_available); % true when SQLite storage is compiled in
+nlolib.load();                          % throws nlolib:libraryLoadFailed if it cannot load
+disp(nlolib.loaded_library_path());
+disp(nlolib.query_runtime_limits());    % device budget and record limits
+disp(nlolib.storage_is_available());    % true when SQLite storage is compiled in
 ```
-
-Constructing `nlolib.NLolib` twice reuses the already-loaded library. Release it
-explicitly with the static `nlolib.NLolib.unload()`; the destructor deliberately
-does not, since several wrapper objects may share one loaded library.
-
-<a name="levels"></a>
-
-## The Two API Levels
-
-`propagate` accepts two calling conventions and picks between them by inspecting
-the first argument.
-
-| Level | Call | Chosen when |
-|---|---|---|
-| High-level | `api.propagate(pulse, linearOp, nonlinearOp, options)` | first argument has `samples` and `delta_time` and no `num_time_samples` |
-| Low-level | `api.propagate(cfg, field, numRecords, ...)` | anything else |
-
-The high-level form derives step sizes, error tolerance, record count, and the
-frequency grid from a preset and the pulse; the low-level form passes a flat
-config struct through to the C API essentially untouched. Start high-level;
-drop to the low-level form when you need to pin solver parameters or use
-runtime features the facade does not expose (Raman, explicit `wt`/`kx`/`ky`
-axes, split `linear_factor_fn`/`linear_fn` operators).
 
 <a name="quickstart"></a>
 
 ## Quick Start
 
-A chirped Gaussian in a dispersive Kerr medium. Both operators are function
-handles; the scalars they use are captured from the workspace:
+A chirped Gaussian in a dispersive Kerr medium. A run is one call: the pulse,
+the two operators, and options by name. Both operators are function handles;
+the scalars they use are captured from the workspace:
 
 ```matlab
-api = nlolib.NLolib();
-
 n  = 512;
 dt = 0.02;
 t  = ((0:(n - 1)) - 0.5 * (n - 1)) * dt;
 
-pulse = struct();
-pulse.samples    = exp(-(t / 0.25).^2) .* exp(-1i * 8.0 * t);
-pulse.delta_time = dt;
+pulse = struct('samples',    exp(-(t / 0.25).^2) .* exp(-1i * 8.0 * t), ...
+               'delta_time', dt);
 
 beta2 = -0.01;    % GVD  [ps^2/m]
 gamma = 0.01;     % Kerr [1/W/m]
@@ -186,12 +163,8 @@ alpha = 0.0;      % power loss [1/m]
 linearOperator    = @(A, w) 1i * (beta2 / 2) * w.^2 - alpha / 2;
 nonlinearOperator = @(A, I, V) 1i * A .* (gamma * I + V);
 
-options = struct();
-options.propagation_distance = 0.506;
-options.records              = 160;
-options.preset               = "balanced";
-
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=0.506, num_records=160, preset="balanced");
 
 fprintf('%d records of %d samples\n', size(result.records));
 fprintf('power in=%.6e out=%.6e\n', ...
@@ -203,11 +176,23 @@ the GLSE term \f$i(\beta_2/2)\partial_t^2\f$ is written `(beta2 / 2)`, and a
 power-loss coefficient \f$\alpha_{\mathrm{pow}}\f$ enters as `- alpha / 2`. See [Runtime Operator
 Mathematics](../../docs/runtime_operators.md).
 
+Options are MATLAB name=value arguments. To keep a set of them in a struct, pass
+it with `namedargs2cell`:
+
+```matlab
+opts = struct('propagation_distance', 0.506, 'num_records', 160);
+args = namedargs2cell(opts);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, args{:});
+```
+
+A misspelled option name is MATLAB's own name=value error, not silently ignored.
+
 <a name="pulse"></a>
 
 ## Describing the Pulse
 
-The pulse struct describes the launch field and the grid it lives on.
+The pulse struct describes the launch field and the grid it lives on. Any other
+field is an `nlolib:invalidPulse` error.
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -215,11 +200,11 @@ The pulse struct describes the launch field and the grid it lives on.
 | `delta_time` | yes | temporal sample spacing, > 0 |
 | `pulse_period` | no | temporal window; default `nt * delta_time` |
 | `frequency_grid` | no | complex angular-frequency axis, one entry per temporal sample; default is the FFT-order grid for `nt` and `delta_time` |
-| `tensor_nt`, `tensor_nx`, `tensor_ny` | no | coupled-run shape; all three together |
-| `tensor_layout` | no | `0` = `TENSOR_LAYOUT_XYT_T_FAST` (t fastest, then y, then x) |
+| `tensor_nt`, `tensor_nx`, `tensor_ny` | no | tensor-run shape; all three together |
 | `delta_x`, `delta_y` | no | transverse sample spacing; default `1.0` |
 | `spatial_frequency_grid` | no | explicit transverse frequency grid, length `nx*ny` or the full volume |
 | `potential_grid` | no | complex potential \f$V\f$, length `nx*ny` or the full volume |
+| `wt_axis`, `kx_axis`, `ky_axis` | no | explicit axes (`kx_axis`, `ky_axis` in tensor runs only); generated by the library otherwise |
 
 `samples` is reshaped to a row vector internally, so any orientation works. The
 default frequency grid is FFT-ordered (non-negative frequencies first, then the
@@ -239,31 +224,38 @@ plotting or spectral post-processing.
 
 ## Describing the Operators
 
-Both operator arguments are function handles. The handle body must be a
-single expression in the runtime symbols; the wrapper lowers it to the
-library's runtime expression when the run starts. Strings, presets and the
-older `struct('expr', ...)` / `struct('fn', ...)` forms are not accepted:
-strings raise `nlolib:stringOperatorRemoved`, anything else that is not a
-function handle `nlolib:invalidOperatorSpec`.
+Operators are function handles. The handle body must be a single expression in
+the runtime symbols; the binding lowers it to the library's runtime expression
+when the run starts. Anything that is not a function handle (a string, a
+struct) raises `nlolib:invalidOperator`.
 
-| Operator | Signature |
-|---|---|
-| linear, \f$D\f$ applied as \f$\exp(hD)\f$ | `@(A, w, wt, kx, ky, x, y, t)` |
-| nonlinear, \f$N(A)\f$ | `@(A, I, V)` |
+Which symbols an operator may use depends on the run type. A run is a *tensor
+run* when the pulse sets `tensor_nt`, `tensor_nx` and `tensor_ny`, and a
+*temporal run* otherwise:
+
+| Operator | How it is passed | Temporal run | Tensor run |
+|---|---|---|---|
+| linear \f$D\f$, applied as \f$\exp(hD)\f$ | second argument | `@(A, w)` | `@(A, wt, kx, ky, x, y, t)` |
+| nonlinear \f$N(A)\f$ | third argument | `@(A, I, V)` | `@(A, I, V)` |
+| per-step linear operator | `linear_step_operator=` | `@(A, D, h, w, V)` | `@(A, D, h, wt, kx, ky, x, y, t, V)` |
+| potential \f$V\f$ | `potential_operator=` | not allowed | `@(x, y, t)` |
 
 | Symbol | Meaning |
 |---|---|
 | `A` | current field value |
 | `I` | \f$\lvert A\rvert^2\f$ |
-| `V` | the `potential_grid` value |
-| `w` | temporal angular frequency |
-| `wt`, `kx`, `ky` | tensor frequency axes (tensor runs) |
-| `t`, `x`, `y` | tensor coordinate axes (tensor runs) |
+| `V` | the potential (`potential_grid` or `potential_operator`) |
+| `w`, `wt` | temporal angular frequency; the two names are the same axis |
+| `kx`, `ky` | transverse frequency axes (tensor runs) |
+| `t`, `x`, `y` | coordinate axes (tensor runs) |
+| `D`, `h` | the linear factor and the step size, in the per-step operator |
 | `exp`, `log`, `sqrt`, `sin`, `cos` | intrinsics |
 
 An argument named after a symbol binds to that symbol, in any position; any
-other name binds to the next unused symbol in the order shown, so
-`@(field, omega)` is `@(A, w)`. Declare only what you use:
+other name takes the next unused symbol in the order shown, so
+`@(field, omega)` is `@(A, w)`. Because `w` and `wt` name the same axis, a
+linear operator written as `@(A, w)` works for both run types. Declare only
+what you use:
 
 ```matlab
 beta2 = 0.05;
@@ -278,54 +270,70 @@ Rules that matter in practice:
   and imaginary literals (`1i`, `0.5j`) become multiples of `i`. The body must
   be a single expression — no statements, no branching, no calls beyond the
   intrinsics above.
-- Any other identifier is captured from the handle's workspace as a real
-  scalar constant (here, `beta2` and `gamma`). A captured value that is
+- An argument named after a runtime symbol the run type does not have
+  (`@(A, kx)` in a temporal run, say) is an `nlolib:invalidOperator` error
+  before the library is called, and so are two arguments for one symbol, such
+  as `@(A, w, wt)`.
+- Runtime symbols enter only through arguments. Any other identifier in the
+  body, even one spelled like a symbol, is captured from the handle's
+  workspace as a real scalar constant (here, `beta2` and `gamma`). A captured value that is
   non-scalar, complex, or non-finite is an error, and so is a struct field:
   copy `cfg.gamma` into a local `gamma` before writing the handle.
-- Pin values explicitly with `runtime.constant_bindings` (a struct or
-  `containers.Map`), or disable capture with
-  `runtime.auto_capture_constants = false`, in the low-level config.
-- The two operators together may capture at most 16 constants
-  (`RUNTIME_OPERATOR_CONSTANTS_MAX`); exceeding that raises
-  `nlolib:tooManyRuntimeConstants`.
-- With `nonlinear_model = NONLINEAR_MODEL_KERR_RAMAN` the nonlinear handle is
-  ignored; pass `@(A) 0`.
+- `constant_bindings=struct('beta2', -0.01)` (or a `containers.Map`) names
+  values explicitly; a name there wins over the workspace.
+- All operators together may use at most 16 constants; more is
+  `nlolib:invalidOption`.
+- With `nonlinear_model="kerr_raman"` the nonlinear handle is ignored; pass
+  `@(A) 0 * A`.
+- `potential_operator` is for tensor runs without a `potential_grid`; on a
+  temporal run, or together with `potential_grid`, it is `nlolib:invalidOption`.
 
 <a name="options"></a>
 
 ## Propagation Options
 
-| Field | Default | Meaning |
+| Option | Default | Meaning |
 |---|---|---|
 | `propagation_distance` | *required*, > 0 | total \f$z\f$ to propagate |
-| `preset` | `"balanced"` | solver defaults, see below |
-| `error_tolerance` | from preset | adaptive-step error target |
-| `starting_step_size`, `max_step_size`, `min_step_size` | from preset | step bounds, in \f$z\f$ units |
-| `records` | from preset | number of \f$z\f$ samples to record |
-| `output` | `"dense"` | `"final"` forces `records = 1` |
-| `t_eval` | none | explicit \f$z\f$ positions to record at; sets the record count, so `records` is ignored when given |
-| `nonlinear_model` | `NONLINEAR_MODEL_EXPR` | `NONLINEAR_MODEL_KERR_RAMAN` selects the compiled Kerr+Raman model instead of the nonlinear handle |
+| `preset` | `"balanced"` | `"fast"`, `"balanced"` or `"accuracy"`; solver defaults, see below |
+| `starting_step_size`, `max_step_size`, `min_step_size`, `error_tolerance` | from preset | step bounds in \f$z\f$ units and the adaptive-step error target |
+| `num_records` | from preset | number of \f$z\f$ samples to return |
+| `record_z` | unset | explicit \f$z\f$ positions to record at |
+| `return_records` | `true` | `false` keeps only what `storage` writes |
+| `potential_operator`, `linear_step_operator` | unset | see [Describing the Operators](#operators) |
+| `constant_bindings` | unset | name → real scalar for the operators |
+| `nonlinear_model` | `"expr"` | `"kerr_raman"` selects the compiled Kerr+Raman model instead of the nonlinear handle |
 | `nonlinear_gamma` | `0.0` | Kerr coefficient for the built-in model |
 | `raman_fraction` | `0.0` | fractional Raman contribution |
 | `raman_tau1`, `raman_tau2` | `0.0122`, `0.0320` | Raman response time constants |
 | `shock_omega0` | `0.0` | self-steepening reference frequency |
-| `raman_response_time` | none | explicit complex response samples, used in place of `tau1`/`tau2` |
-| `exec_options` | `struct()` | backend and telemetry selection |
-| `storage` | none | SQLite storage options |
+| `raman_response_time` | unset | explicit complex response samples, used in place of `tau1`/`tau2` |
+| `exec_options` | unset | backend selection, below |
+| `storage` | unset | SQLite storage, see [SQLite Storage](#storage) |
+| `capture_step_history` | `false` | fill `result.step_history` |
+| `step_history_capacity` | `200000` | step events to preallocate |
+| `live_progress` | `true` (`false` under `-batch`) | MATLAB only: print progress and logs in the Command Window during the run; Ctrl+C aborts |
+| `progress_style` | auto | MATLAB only: `"inline"` redraws one line in place; `"lines"` prints one line per milestone |
+| `stream_logs` | `false` | MATLAB only: print the runtime log buffer after the call, and attach it to the error when the run fails |
 
-`t_eval` values must lie within \f$[0, L]\f$ and be nondecreasing; the solver
-walks the list in order, so an unsorted list would silently drop records. The
-returned `result.z_axis` is then the list you asked for rather than a linspace:
+### Which records come back
+
+- `record_z` given: records at exactly those positions, which must lie within
+  \f$[0, L]\f$ and be nondecreasing. `num_records` must then be unset or equal
+  to `numel(record_z)`. `result.z_axis` is the list you asked for.
+- `record_z` unset and `num_records = 1`: the final field only, and
+  `result.z_axis` is `L`.
+- Otherwise `num_records` uniformly spaced positions from 0 to \f$L\f$.
 
 ```matlab
-options.propagation_distance = 0.05;
-options.t_eval               = [0.0, 0.005, 0.02, 0.05];
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);   % 4 records
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=0.05, record_z=[0.0, 0.005, 0.02, 0.05]);   % 4 records
 ```
 
-The nonlinear-model fields are the same ones the low-level `runtime`
-sub-struct takes, and the names and values match the Python and Julia
-packages. Use `nlolib.constants` rather than writing the integers by hand.
+A single `record_z` position is meant to return the field at that \f$z\f$. The
+core library this release builds against still returns the final field
+whenever exactly one record is requested, so `result.z_axis` is then
+`propagation_distance`, the position of the field actually returned.
 
 ### Presets
 
@@ -339,67 +347,29 @@ Step sizes scale with the propagation distance \f$L\f$:
 
 The solver is adaptive, so these are bounds and an initial guess, not a fixed
 schedule. Any of `error_tolerance`, `starting_step_size`, `max_step_size` and
-`min_step_size` set in `options` replaces the preset value.
+`min_step_size` given as an option replaces the preset value.
 
 ### Execution options
 
-`options.exec_options` is passed through to `execution_options`, plus a few
-MATLAB-only keys handled by the wrapper.
+`exec_options` is a struct with the C `execution_options` field names. Any
+other field, and an integer where a string is expected, is
+`nlolib:invalidOption`.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `backend_type` | `2` | `0` CPU, `1` Vulkan, `2` auto — see `nlolib.constants.VECTOR_BACKEND_*` |
-| `fft_backend` | `0` | `0` auto, `1` FFTW, `2` VkFFT — see `nlolib.constants.FFT_BACKEND_*` |
+| `backend_type` | `"auto"` | `"cpu"`, `"vulkan"` or `"auto"` |
+| `fft_backend` | `"auto"` | `"auto"`, `"fftw"` or `"vkfft"` |
 | `device_heap_fraction` | `0.70` | fraction of the device budget the solver may use |
 | `record_ring_target` | `0` | record ring size hint; `0` lets the library choose |
 | `forced_device_budget_bytes` | `0` | override the detected device budget |
-| `capture_step_history` | `false` | fill `result.step_history` |
-| `step_history_capacity` | `200000` | step events to preallocate |
-| `matlab_live_progress` | `true` (`false` under `-batch`) | print progress and logs in the Command Window during the run; Ctrl+C aborts |
-| `matlab_progress_style` | auto | `"inline"` redraws one line in place; `"lines"` prints one line per progress milestone. Defaults to `"lines"` in browser-based MATLAB |
-| `matlab_stream_logs` | `false` | drain the runtime log buffer after the call |
-| `matlab_log_buffer_bytes` | `262144` | buffer size used when streaming logs |
-| `matlab_progress_stream` | auto | `0` stderr, `1` stdout, `2` both; defaults to *both* when MATLAB has no desktop |
-| `matlab_debug` | `false` | attach output-buffer probe details to failures |
 
 ```matlab
-execOptions = struct();
-execOptions.backend_type          = 1;         % Vulkan
-execOptions.fft_backend           = 2;         % VkFFT
-execOptions.capture_step_history  = true;
-execOptions.step_history_capacity = uint64(200000);
-
-options.exec_options = execOptions;
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+    propagation_distance=1.0, ...
+    exec_options=struct('backend_type', "vulkan", 'fft_backend', "vkfft"));
 ```
 
 <a name="result"></a>
-
-### Named values
-
-`nlolib.constants` carries every C API enum value and limit by name, with the
-same names and values the Python (`nlolib.*`) and Julia (`NLOLib.*`) packages
-export, so a script reads the same way in all three. Enum-like values are
-`int32` and the limits are `uint64`, matching the C field types, so they drop
-straight into a config or options struct with no cast:
-
-```matlab
-execOptions = struct( ...
-    'backend_type', nlolib.constants.VECTOR_BACKEND_VULKAN, ...
-    'fft_backend',  nlolib.constants.FFT_BACKEND_VKFFT);
-
-options.nonlinear_model = nlolib.constants.NONLINEAR_MODEL_KERR_RAMAN;
-```
-
-The groups are `VECTOR_BACKEND_*`, `FFT_BACKEND_*`, `NONLINEAR_MODEL_*`,
-`TENSOR_LAYOUT_*`, `STORAGE_DB_CAP_POLICY_*`, `PROPAGATE_OUTPUT_*`,
-`NLOLIB_STATUS_*`, `NLOLIB_LOG_LEVEL_*`, `NLOLIB_PROGRESS_STREAM_*` and
-`PROGRESS_EVENT_*`, plus the `NT_MAX` and `STORAGE_RUN_ID_MAX` limits. Run
-`doc nlolib.constants` for the annotated list.
-
-`tests/api_parity.json` is the canonical list, and
-`tools/check_api_parity.py` (CTest name `test_api_parity`, no interpreters or
-MATLAB needed) fails if any binding is missing a name or disagrees about a
-value.
 
 ## Reading the Result
 
@@ -408,18 +378,18 @@ value.
 | Field | Type | Meaning |
 |---|---|---|
 | `records` | `numRecords x numSamples` complex | recorded fields, one row per \f$z\f$ sample |
+| `z_axis` | numeric | \f$z\f$ of each record |
 | `final` | `1 x numSamples` complex | last row of `records`, `[]` when nothing was returned |
-| `z_axis` | numeric | \f$z\f$ positions, `linspace(0, L, numRecords)` |
-| `step_history` | struct | solver telemetry, see below |
-| `meta` | struct | run metadata |
+| `step_history` | struct or `[]` | solver telemetry when `capture_step_history`, see below |
+| `storage_result` | struct or `[]` | what was written when `storage` is given |
+| `meta` | struct | `preset`, `records_requested`, `records_written`, `backend_requested`, `coupled`, `status` |
 
-`meta` carries `output`, `records`, `records_requested`, `records_written`,
-`records_returned`, `storage_enabled`, `coupled`, and `step_history_dropped`;
-the high-level path adds `preset`, the low-level path adds `backend_requested`,
-and either adds `storage_result` when storage is enabled.
+`meta.preset`, `meta.backend_requested` and `meta.status` are strings
+(`status` is `"ok"`; a failed run raises instead). `coupled` is true for a
+tensor run with a transverse extent.
 
 `records_written` can be smaller than `records_requested` — the library reduces
-the count for fixed-step runs, explicit-\f$z\f$ schedules, and callback-aborted
+the count for fixed-step runs, explicit-\f$z\f$ schedules, and aborted
 runs — so size plots off `size(result.records, 1)` rather than the request:
 
 ```matlab
@@ -436,20 +406,20 @@ fprintf('power drift = %.3e\n', abs(power(end) - power(1)) / power(1));
 
 ## Coupled 2D and 3D Runs
 
-Setting `tensor_nt`, `tensor_nx`, and `tensor_ny` switches the run to a coupled
+Setting `tensor_nt`, `tensor_nx`, and `tensor_ny` switches the run to a tensor
 field of `tensor_nt * tensor_nx * tensor_ny` points. `samples` must be
-flattened in `TENSOR_LAYOUT_XYT_T_FAST` order — t fastest, then y, then x —
-which is exactly MATLAB's own ordering for an `(nt, ny, nx)` array, so a plain
-`reshape(field0, 1, [])` is correct and `reshape(row, [ny, nx])` inverts it for
-a transverse sheet.
+flattened t fastest, then y, then x — which is exactly MATLAB's own ordering
+for an `(nt, ny, nx)` array, so a plain `reshape(field0, 1, [])` is correct and
+`reshape(row, [ny, nx])` inverts it for a transverse sheet.
 
 Diffraction is encoded in the linear operator through `kx`/`ky`; the transverse
 axes are generated by the library from `delta_x` and `delta_y` unless you supply
-`spatial_frequency_grid` (or `kx_axis`/`ky_axis` in the low-level config).
+`spatial_frequency_grid` or `kx_axis`/`ky_axis`. The coordinate axes `x` and `y`
+are centred: \f$x_i = (i - (n_x - 1)/2)\,\Delta x\f$.
 
 ### Transverse-only (x-y sheet)
 
-Set `tensor_nt = 1`. The temporal fields are then unused but still required:
+Set `tensor_nt = 1`:
 
 ```matlab
 [xx, yy] = meshgrid(x, y);                       % both ny-by-nx
@@ -461,19 +431,17 @@ pulse.samples        = reshape(field0, 1, []);
 pulse.tensor_nt      = 1;
 pulse.tensor_nx      = nx;
 pulse.tensor_ny      = ny;
-pulse.tensor_layout  = 0;
 pulse.delta_x        = dx;
 pulse.delta_y        = dy;
 pulse.delta_time     = 1.0;                      % unused when tensor_nt == 1
-pulse.pulse_period   = 1.0;                      % unused when tensor_nt == 1
-pulse.frequency_grid = complex(0.0, 0.0);        % one entry per tensor_nt
 pulse.potential_grid = reshape(complex(potential, 0), 1, []);
 
 betaT = -1.0 / (2.0 * k0);
-linearOperator    = @(A, w, wt, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
+linearOperator    = @(A, kx, ky) 1i * betaT * (kx.^2 + ky.^2);
 nonlinearOperator = @(A, I, V) 1i * A .* V;      % consume the potential only
 
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=zFinal, num_records=96);
 
 sheets = zeros(size(result.records, 1), ny, nx);
 for idx = 1:size(result.records, 1)
@@ -481,7 +449,11 @@ for idx = 1:size(result.records, 1)
 end
 ```
 
-See [`examples/matlab/standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m)
+The same potential can be written as an operator instead of a grid:
+`potential_operator=@(x, y) grinDepth * (x.^2 + y.^2)`, with `potential_grid`
+left out.
+
+See [`examples/matlab/transverse_grin_beam.m`](../examples/transverse_grin_beam.m)
 for the complete script, which checks the beam centroid against
 \f$x_0\cos(gz)\f$.
 
@@ -498,28 +470,23 @@ pulse.samples        = reshape(complex(field0, 0), 1, []);
 pulse.tensor_nt      = nt;
 pulse.tensor_nx      = nx;
 pulse.tensor_ny      = ny;
-pulse.tensor_layout  = 0;
 pulse.delta_time     = dt;
-pulse.pulse_period   = nt * dt;
 pulse.delta_x        = dx;
 pulse.delta_y        = dy;
-pulse.frequency_grid = complex(omega, zeros(1, nt));   % one entry per tensor_nt
 
 b2 = 0.5 * beta2;
 bt = -1.0 / (2.0 * k0);
 linearOperator = @(A, wt, kx, ky) 1i * (b2 * wt.^2 + bt * (kx.^2 + ky.^2));
 ```
 
-Note that the temporal symbol is `wt`, not `w`, once the run is a tensor run.
-Full script: [`examples/matlab/standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m).
+Full script: [`examples/matlab/spatiotemporal_kerr_bullet.m`](../examples/spatiotemporal_kerr_bullet.m).
 
-Each record comes back as one flat row of `nt*nx*ny` samples, in
-`TENSOR_LAYOUT_XYT_T_FAST` order. `nlolib.tensor_record_view` reshapes a row
-into a volume indexed as `volume(it, iy, ix)`, which is the same view the Julia
-binding's `tensor_record_view` returns. Index `0` selects the final record:
+Each record comes back as one flat row of `nt*nx*ny` samples.
+`nlolib.tensor_record_view` reshapes one record into a volume indexed as
+`volume(it, iy, ix)`, the same view the Python and Julia packages return:
 
 ```matlab
-volume = nlolib.tensor_record_view(result.records, 0, nt, nx, ny);
+volume = nlolib.tensor_record_view(result.final, nt, nx, ny);
 imagesc(abs(squeeze(volume(ceil(nt / 2), :, :))).^2);   % x-y slice at pulse centre
 ```
 
@@ -527,102 +494,13 @@ Memory grows as the product of the three dimensions times the record count —
 check the budget with [`query_runtime_limits`](#limits) before launching a large
 grid.
 
-<a name="lowlevel"></a>
-
-## Low-Level Configuration API
-
-```matlab
-result = api.propagate(cfg, inputField, numRecordedSamples);
-result = api.propagate(cfg, inputField, numRecordedSamples, execOptions);
-result = api.propagate(cfg, inputField, numRecordedSamples, execOptions, storageOptions);
-```
-
-The fourth argument is treated as storage options when it has an `sqlite_path`
-field, otherwise as execution options.
-
-### Required config fields
-
-`num_time_samples`, `propagation_distance`, `starting_step_size`,
-`max_step_size`, `min_step_size`, `error_tolerance`, `pulse_period`,
-`delta_time`, `frequency_grid`.
-
-`num_time_samples` must equal `numel(inputField)` — for a tensor run that is the
-whole volume, `tensor_nt * tensor_nx * tensor_ny`, not the temporal length. A
-mismatch raises `nlolib:inputFieldLengthMismatch` rather than a bare
-`INVALID_ARGUMENT` from the C dimension resolver.
-
-### Optional config fields
-
-`tensor_nt`, `tensor_nx`, `tensor_ny`, `tensor_layout`, `delta_x`, `delta_y`,
-`spatial_frequency_grid`, `kx_axis`, `ky_axis`, `potential_grid`, `wt_axis`,
-and `runtime`.
-
-`wt_axis`, `kx_axis`, and `ky_axis` are left unset unless you supply them, which
-is what tells the library to generate the axes itself — do not pass `[]` to
-"clear" them.
-
-### The runtime sub-struct
-
-| Field | Meaning |
-|---|---|
-| `dispersion_factor_fn` | \f$D\f$, applied as \f$\exp(hD)\f$: `@(A, w, wt, kx, ky, x, y, t)` |
-| `dispersion_fn` | full dispersion operator: `@(A, D, h, w, wt, kx, ky, x, y, t, V)` |
-| `linear_factor_fn`, `linear_fn` | split tensor linear operator: `@(A, wt, kx, ky, x, y, t)`, `@(A, D, h, wt, kx, ky, x, y, t, V)` |
-| `potential_fn` | potential term: `@(x, y, t, wt, kx, ky)` |
-| `nonlinear_fn` | \f$N(A)\f$: `@(A, I, V)` |
-| `constant_bindings` | explicit name → value map for the handles |
-| `auto_capture_constants` | set `false` to reject closure capture |
-| `nonlinear_model` | `0` expression model, Kerr+Raman selector otherwise |
-| `nonlinear_gamma`, `raman_fraction`, `raman_tau1`, `raman_tau2`, `shock_omega0` | built-in Kerr+Raman parameters |
-| `raman_response_time` | explicit complex Raman response samples |
-
-Every operator is a function handle, bound as described under
-[Describing the Operators](#operators). The string fields `*_expr` have been
-removed and raise `nlolib:stringOperatorRemoved`.
-
-```matlab
-beta2 = -0.02;  alpha = 0.10;  gamma = 1.20;
-
-cfg = struct();
-cfg.num_time_samples     = n;
-cfg.propagation_distance = 1.0;
-cfg.starting_step_size   = 5e-3;
-cfg.max_step_size        = 4e-2;
-cfg.min_step_size        = 5e-5;
-cfg.error_tolerance      = 1e-6;
-cfg.delta_time           = dt;
-cfg.pulse_period         = n * dt;
-cfg.frequency_grid       = complex(omega, zeros(1, n));
-cfg.runtime = struct( ...
-    'dispersion_factor_fn', @(A, w) 1i * (0.5 * beta2) * w.^2 - 0.5 * alpha, ...
-    'nonlinear_fn',         @(A, I) 1i * gamma * A .* I);
-
-result = api.propagate(cfg, field0, 128, struct('backend_type', 2));
-```
-
-`nlolib.prepare_sim_config(cfg)` performs the config → `libstruct` translation
-on its own if you want to inspect or reuse it:
-
-```matlab
-[simCfgPtr, physicsCfgPtr, keepalive] = nlolib.prepare_sim_config(cfg);
-```
-
-`keepalive` holds the `libpointer` objects backing the pointer fields — it must
-stay in scope for as long as the pointers are used, or MATLAB will free the
-buffers underneath the library.
-
 <a name="telemetry"></a>
 
 ## Solver Telemetry and Step History
 
-Enable capture through the execution options and read `result.step_history`:
-
 ```matlab
-execOptions = struct('capture_step_history', true, ...
-                     'step_history_capacity', uint64(200000));
-options.exec_options = execOptions;
-
-result  = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result  = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                           propagation_distance=1.0, capture_step_history=true);
 history = result.step_history;
 
 fprintf('%d steps, %d dropped, mean step %.3e\n', ...
@@ -650,60 +528,59 @@ A non-zero `dropped` means the history is truncated, not that the run failed.
 ### Logs
 
 ```matlab
-api.set_log_level(3);                  % 0 ERROR, 1 WARN, 2 INFO, 3 DEBUG
-api.set_log_buffer(uint64(256 * 1024));
-api.clear_log_buffer();
+nlolib.set_log_level("debug");            % "error", "warn", "info" or "debug"
+nlolib.set_log_buffer(256 * 1024);
+nlolib.clear_log_buffer();
 
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, propagation_distance=1.0);
 
-api.tail_logs();                       % print and consume
-text = api.read_log_buffer(false);     % read without consuming
-api.set_log_file('run.log', true);     % also mirror to a file, append
+text = nlolib.read_log_buffer();                  % read and consume
+text = nlolib.read_log_buffer(consume=false);     % read without consuming
+nlolib.set_log_file('run.log', append=true);      % also mirror to a file
 ```
 
-Setting `exec_options.matlab_stream_logs = true` does the buffer setup and the
-drain for you, and attaches the captured log text to the error message when a
-propagation fails — the fastest way to diagnose a failing run.
+`stream_logs=true` does the buffer setup and the drain for you, prints the
+text, and attaches it to the error message when a propagation fails — the
+fastest way to diagnose a failing run.
 
 ### Progress
 
 The MATLAB desktop and the VS Code MATLAB extension do not show the library's
 own stdout/stderr. `propagate` therefore prints a live progress line, and every
 runtime log line, through the Command Window while the solver runs, and Ctrl+C
-stops the run. This uses a small MEX file shipped with the toolbox
-(`+nlolib/private/progress_mex`). Without it (a build tree where
-`matlab/build_progress_mex.m` has not been run), the logs are printed after the
-run instead and the progress bar is not shown.
+stops the run (`nlolib:propagationAborted`). This uses a small MEX file shipped
+with the toolbox (`+nlolib/private/progress_mex`). Without it (a build tree
+where `matlab/build_progress_mex.m` has not been run), the logs are printed
+after the run instead and the progress bar is not shown.
 
 The progress line is redrawn at most once per second, so a fast solver cannot
 queue more updates than the Command Window can paint. In browser-based MATLAB
 (matlab-proxy, MATLAB Online, and the R2025a+ desktop) the Command Window
 prints backspaces rather than erasing with them, so `propagate` prints one line
 per progress milestone instead (every 5% by default; see
-`set_progress_options`). Set `exec_options.matlab_progress_style` to `"inline"`
-or `"lines"` to override the choice.
+`set_progress_options`). Pass `progress_style="inline"` or `"lines"` to
+override the choice.
 
-Under `-batch` the library's own console progress bar is used instead; set
-`exec_options.matlab_live_progress` to choose explicitly.
+Under `-batch` the library's own console progress bar is used instead; pass
+`live_progress` to choose explicitly.
 
 ```matlab
-api.set_progress_options(false);             % no progress output at all
-api.set_progress_options(true, 10, false);   % enabled, every 10%, not on step adjust
-api.set_progress_stream(2);                  % console bar: 0 stderr, 1 stdout, 2 both
+nlolib.set_progress_options(enabled=false);                 % no progress output at all
+nlolib.set_progress_options(enabled=true, milestone_percent=10);
+nlolib.set_progress_stream("both");                         % console bar: "stderr", "stdout" or "both"
 ```
 
 When the console bar is used and MATLAB has no desktop, `propagate` selects
-stream mode *both* automatically so progress survives redirection; set
-`exec_options.matlab_progress_stream` to override.
+stream mode `"both"` automatically so progress survives redirection.
 
 ### Perf counters
 
 ```matlab
-api.perf_profile_set_enabled(true);
-api.perf_profile_reset();
+nlolib.perf_profile_set_enabled(true);
+nlolib.perf_profile_reset();
 
-result   = api.propagate(pulse, linearOperator, nonlinearOperator, options);
-snapshot = api.perf_profile_read();
+result   = nlolib.propagate(pulse, linearOperator, nonlinearOperator, propagation_distance=1.0);
+snapshot = nlolib.perf_profile_read();
 
 fprintf('dispersion %.1f ms over %d calls, nonlinear %.1f ms over %d calls\n', ...
         snapshot.dispersion_ms, snapshot.dispersion_calls, ...
@@ -711,19 +588,20 @@ fprintf('dispersion %.1f ms over %d calls, nonlinear %.1f ms over %d calls\n', .
 ```
 
 The snapshot also reports GPU dispatch counts, host/device copy counts and
-bytes, and upload/download totals — useful when comparing FFT backends or
-tuning `device_heap_fraction`.
+bytes, upload/download totals, and the operator JIT counters
+(`operator_jit_programs`, `operator_jit_fallbacks`) — useful when comparing FFT
+backends or tuning `device_heap_fraction`.
 
-Every logging and perf method raises `nlolib:logUnavailable` or
-`nlolib:perfProfileUnavailable` when the loaded library was built without the
-corresponding entry point, so guard them if you ship against multiple builds.
+Every logging and perf function raises `nlolib:unavailable` when the loaded
+library was built without the corresponding entry point, so guard them if you
+ship against multiple builds.
 
 <a name="limits"></a>
 
 ## Sizing a Run with query_runtime_limits
 
 ```matlab
-limits = api.query_runtime_limits(cfg, execOptions);
+limits = nlolib.query_runtime_limits(pulse=pulse, exec_options=struct('backend_type', "vulkan"));
 
 fprintf('max time samples          : %d\n', limits.max_num_time_samples_runtime);
 fprintf('max in-memory records     : %d\n', limits.max_num_recorded_samples_in_memory);
@@ -733,10 +611,10 @@ fprintf('working set / budget      : %.2f / %.2f GiB\n', ...
         limits.estimated_device_budget_bytes / 2^30);
 ```
 
-Both arguments are optional; called bare it reports the device budget for a
-trivial config. `storage_available` mirrors `api.storage_is_available()`.
+Both options are optional; without `pulse` the limits that depend on the grid
+are 0. `storage_available` mirrors `nlolib.storage_is_available()`.
 
-Query before a large tensor run and clamp `records` to
+Query before a large tensor run and clamp `num_records` to
 `max_num_recorded_samples_in_memory`, or enable storage.
 
 <a name="storage"></a>
@@ -745,64 +623,51 @@ Query before a large tensor run and clamp `records` to
 
 Storage streams records to a database instead of holding them all in memory. It
 is only present when the library was built with SQLite support — check
-`api.storage_is_available()` first, or you get `nlolib:storageUnavailable`.
+`nlolib.storage_is_available()` first, or you get `nlolib:unavailable`.
 
 ```matlab
-storage = struct();
-storage.sqlite_path = 'run.sqlite';    % required
-storage.run_id      = 'sweep-01';
-storage.chunk_records = uint64(64);
-storage.return_records = false;        % stream only, keep memory flat
+storage = struct('sqlite_path', 'run.sqlite', ...   % required
+                 'run_id', 'sweep-01', ...
+                 'chunk_records', 64);
 
-options.storage = storage;             % high-level
-result = api.propagate(pulse, linearOperator, nonlinearOperator, options);
-
-% low-level: pass as the fifth argument
-result = api.propagate(cfg, field0, 4096, execOptions, storage);
-
-disp(result.meta.storage_result);
+result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
+                          propagation_distance=1.0, num_records=4096, ...
+                          storage=storage, return_records=false);   % stream only, keep memory flat
+disp(result.storage_result);
 ```
 
 | Field | Meaning |
 |---|---|
 | `sqlite_path` | database path, required and non-empty |
-| `run_id` | run label; generated when omitted |
+| `run_id` | run label, at most 63 characters; generated when omitted |
 | `sqlite_max_bytes` | database size cap, `0` for unlimited |
 | `chunk_records` | records per write batch |
-| `cap_policy` | `0` stop writes at the cap, `1` fail the run |
+| `cap_policy` | `"stop_writes"` (default) stops writing at the cap, `"fail"` fails the run |
 | `log_final_output_field_to_db` | also persist the final field |
-| `return_records` | `false` skips the in-memory record buffer entirely |
 
-`result.meta.storage_result` reports `run_id`, `records_captured`,
+`result.storage_result` reports `run_id`, `records_captured`,
 `records_spilled`, `chunks_written`, `db_size_bytes`, and `truncated`. With
-`return_records = false`, `result.records` is empty by design — read the data
-back from the database.
+`return_records=false`, `result.records` is empty by design — read the data
+back from the database. `return_records=false` without `storage` is an
+`nlolib:invalidOption` error, since nothing would be kept.
 
 <a name="troubleshooting"></a>
 
 ## Troubleshooting
 
+Every error the package raises carries one of seven identifiers:
+
 | Identifier | Cause | Fix |
 |---|---|---|
-| `nlolib:libraryNotFound` | no `nlolib.dll` / `libnlolib.so` on any search path | set `NLOLIB_LIBRARY`, or pass the path to the constructor |
-| `nlolib:headerNotFound` | `nlolib_matlab.h` missing next to the library | rebuild the `matlab_stage` target, or reinstall the toolbox |
-| `nlolib:libraryLoadFailed` | every candidate failed to load | the message lists each library and the interface used (prototype or header); a header-parse failure means no prototype was staged and no compiler is set up — run `matlab/generate_library_prototype.m` or `mex -setup C`. Otherwise suspect an architecture mismatch |
-| `nlolib:loadlibraryWarnings` | header parsed with warnings | non-fatal on its own, but unresolved types fail later — treat it as a real signal |
-| `nlolib:simConfigTypeUnavailable` | stale or duplicate parsed type table | `nlolib.NLolib.unload(); clear classes;` then confirm only one `nlolib` package is on the path |
-| `nlolib:inputFieldLengthMismatch` | `cfg.num_time_samples ~= numel(inputField)` | for tensor runs set it to `nt*nx*ny` |
-| `nlolib:invalidPulseSpec` | bad shape or missing `samples`/`delta_time` | `numel(samples)` must equal `tensor_nt*tensor_nx*tensor_ny` |
-| `nlolib:stringOperatorRemoved` | an operator given as a string, or a `cfg.runtime.*_expr` field | pass a function handle, e.g. `@(A, w) 1i * beta2 * w.^2`; use the `*_fn` fields |
-| `nlolib:invalidOperatorSpec` | an operator that is not a function handle, or a handle the wrapper cannot lower | see [Describing the Operators](#operators) |
-| `nlolib:tooManyRuntimeConstants` | more than 16 captured constants | fold constants together into fewer workspace scalars |
-| `nlolib:propagateFailed` | the C call returned non-OK | rerun with `exec_options.matlab_stream_logs = true` and `set_log_level(3)` |
-| `nlolib:legacyApiRemoved` | `time_nt`/`spatial_nx`/`spatial_ny`/`transverse_*` | migrate to `tensor_nt`/`tensor_nx`/`tensor_ny` and encode diffraction in the linear operator |
-| `nlolib:storageUnavailable` | library built without SQLite | check `api.storage_is_available()` |
-| `nlolib:logUnavailable`, `nlolib:perfProfileUnavailable` | entry point absent in this build | guard optional calls |
+| `nlolib:invalidOperator` | an operator that is not a function handle (strings included), or a handle the binding cannot lower: an unknown identifier, an argument named after a symbol the run type does not have, two arguments for one symbol | see [Describing the Operators](#operators) |
+| `nlolib:invalidPulse` | missing `samples`/`delta_time`, an unknown pulse field, or a shape mismatch | `numel(samples)` must equal `tensor_nt*tensor_nx*tensor_ny` |
+| `nlolib:invalidOption` | a bad option value, including an unknown enum string or an integer where a string is expected, an unknown `exec_options`/`storage` field, more than 16 constants | the message names the option |
+| `nlolib:libraryLoadFailed` | no `nlolib.dll` / `libnlolib.so` found, or every candidate failed to load, or MATLAB's parsed type table is unusable | the message lists each library and the interface used (prototype or header); a header-parse failure means no prototype was staged and no compiler is set up — run `matlab/generate_library_prototype.m` or `mex -setup C`. For a stale type table run `nlolib.unload(); clear classes;` and check only one `nlolib` package is on the path |
+| `nlolib:unavailable` | the library was built without the feature (SQLite storage, a logging or perf entry point) | check `nlolib.storage_is_available()`, guard optional calls |
+| `nlolib:statusFailed` | the C call returned a non-OK status; the message names it (`"invalid_argument"`, `"allocation_failed"`, `"not_implemented"`) | rerun with `stream_logs=true` and `nlolib.set_log_level("debug")` |
+| `nlolib:propagationAborted` | the run was stopped (Ctrl+C during live progress) | |
 
-`unknown identifier '<name>' in <context> handle` means a handle referenced a
-variable that is neither a runtime symbol nor a real scalar in its workspace —
-define it before creating the handle, or bind it through
-`runtime.constant_bindings`.
+An unknown option name is MATLAB's own name=value error.
 
 When a run misbehaves numerically rather than failing, the usual sequence is:
 tighten `preset` to `"accuracy"`, enable `capture_step_history` and look for the
@@ -813,30 +678,37 @@ step size pinned at `min_step_size`, then check power/energy drift across
 
 ## Example Scripts
 
-The self-contained scripts run against an installed toolbox with no repo
-helpers; the rest use `setup_matlab_example_environment` and the `+backend`
-plotting helpers.
+The examples are the set shared with the Python and Julia packages: the same
+problem, parameters and printed metric labels in every binding. Each is a
+function that prints its metrics as `label: value` and returns them in a
+struct. They use `setup_matlab_example_environment` and the `+backend`
+helpers (grids, metrics, plots).
 
-| Script | Shows |
-|---|---|
-| [`standalone_transverse_grin_beam.m`](../examples/standalone_transverse_grin_beam.m) | transverse x-y run, potential grid, analytical centroid check |
-| [`standalone_spatiotemporal_kerr_bullet.m`](../examples/standalone_spatiotemporal_kerr_bullet.m) | full 3+1D Kerr propagation against Gaussian beam/pulse laws |
-| [`grin_fiber_soliton_fission.m`](../examples/grin_fiber_soliton_fission.m) | 3+1D higher-order soliton fission and dispersive wave in a GRIN fibre |
-| [`runtime_temporal_demo.m`](../examples/runtime_temporal_demo.m) | log buffer and progress options |
-| [`second_order_soliton_rk4ip.m`](../examples/second_order_soliton_rk4ip.m) | analytical soliton validation with step-history telemetry |
-| [`linear_drift_rk4ip.m`](../examples/linear_drift_rk4ip.m) | purely dispersive drift with an analytical reference |
-| [`runtime_callable_operator_rk4ip.m`](../examples/runtime_callable_operator_rk4ip.m) | callable runtime operators end to end |
-| [`coupled_dispersion_nonlinearity_diffraction_rk4ip.m`](../examples/coupled_dispersion_nonlinearity_diffraction_rk4ip.m) | coupled 3+1D dispersion, nonlinearity, and diffraction |
-| [`grin_fiber_xy_rk4ip.m`](../examples/grin_fiber_xy_rk4ip.m) | GRIN transverse phase validation |
+| Script | Shows | Metrics |
+|---|---|---|
+| [`quickstart.m`](../examples/quickstart.m) | the shortest propagate call: a chirped Gaussian under dispersion | initial power, final power |
+| [`linear_drift.m`](../examples/linear_drift.m) | dispersive drift of a phase-ramped pulse against the exact linear solution | centroid slope relative error |
+| [`spm.m`](../examples/spm.m) | self-phase modulation against the closed-form phase | final mean pointwise relative error, power drift |
+| [`second_order_soliton.m`](../examples/second_order_soliton.m) | N = 2 soliton over one period, with step history | epsilon (relative L2 intensity error at z_final) |
+| [`conservation_checks.m`](../examples/conservation_checks.m) | energy, momentum and Hamiltonian of a lossless NLSE run | max energy / momentum / Hamiltonian drift |
+| [`raman_scattering.m`](../examples/raman_scattering.m) | built-in Kerr + Raman model, self-frequency shift against the moment equation | centroid-curve relative error vs prediction |
+| [`tensor_dispersion_3d.m`](../examples/tensor_dispersion_3d.m) | linear (t, x, y) run against the exact FFT-domain solution | final field relative error, power drift |
+| [`transverse_grin_beam.m`](../examples/transverse_grin_beam.m) | x-y run, potential grid, beam centroid against x0 cos(gz) | power drift, max centroid deviation |
+| [`spatiotemporal_kerr_bullet.m`](../examples/spatiotemporal_kerr_bullet.m) | 3+1D Gaussian packet, linear vs Kerr, against Gaussian spreading laws | width error, radius error, energy drift |
+| [`grin_soliton_fission.m`](../examples/grin_soliton_fission.m) | 4th-order soliton fission in a GRIN fibre | energy drift, peak power in/out (MW), accepted steps |
+| [`high_order_grin_soliton.m`](../examples/high_order_grin_soliton.m) | saturable nonlinearity, linear_step_operator, GRIN guidance | final radius / launch radius, min overlap fidelity, power drift |
+| [`sqlite_storage.m`](../examples/sqlite_storage.m) | return_records=false with SQLite storage, read back | records captured, chunks written, db size bytes |
 
 Run one from the repository with:
 
 ```matlab
-addpath('examples/matlab');
-runtime_temporal_demo
+addpath('examples');
+quickstart
 ```
 
-Plots are written under `examples/matlab/output/<example-name>/`.
+Plots are written under `examples/output/<example-name>/` (or the folder in
+`NLOLIB_EXAMPLE_OUTPUT`). The largest, `high_order_grin_soliton`, returns
+805 MB of records.
 
 ## Related Reference
 

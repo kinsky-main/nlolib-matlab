@@ -1,28 +1,30 @@
-% nlolib  GPU-first nonlinear optics propagation (MATLAB wrapper).
+% nlolib  GPU-first nonlinear optics propagation (MATLAB binding).
 %
 % Solver
-%   NLolib                   - Load the nlolib library and run propagations.
-%   NLolib/propagate         - Propagate a pulse or coupled (t, x, y) field.
-%   NLolib/query_runtime_limits - Solver memory and record limits for a config.
+%   propagate                - Propagate a pulse or a tensor (t, x, y) field.
+%   query_runtime_limits     - Solver memory and record limits for a pulse.
+%   storage_is_available     - True when SQLite storage is compiled in.
+%   tensor_record_view       - Reshape a tensor record into an (nt, ny, nx) volume.
 %
-% Logging and diagnostics
-%   NLolib/set_log_level     - Runtime log level threshold.
-%   NLolib/set_log_file      - Write runtime logs to a file.
-%   NLolib/set_log_buffer    - Keep runtime logs in an in-memory buffer.
-%   NLolib/tail_logs         - Print buffered runtime logs.
-%   NLolib/set_progress_options - Progress bar behaviour.
-%   NLolib/perf_profile_read - Read runtime performance counters.
+% Library
+%   load                     - Load the shared library, optionally from a path.
+%   unload                   - Unload the shared library.
+%   loaded_library_path      - Path of the loaded shared library.
 %
-% Named values
-%   constants                - C API enum values and limits, by name.
+% Logging and progress
+%   set_log_level            - Runtime log level threshold.
+%   set_log_file             - Write runtime logs to a file.
+%   set_log_buffer           - Keep runtime logs in an in-memory buffer.
+%   clear_log_buffer         - Empty the log buffer.
+%   read_log_buffer          - Read the log buffer.
+%   set_progress_options     - Progress bar behaviour.
+%   set_progress_stream      - Progress bar output stream.
 %
-% Result helpers
-%   tensor_record_view       - Reshape a coupled record into an (nt, ny, nx) volume.
-%
-% Low-level C API bridge
-%   prepare_sim_config       - Build a sim_config libstruct from a MATLAB struct.
-%   pack_complex_array       - Pack a complex vector for the C API.
-%   unpack_records           - Unpack C output records into a MATLAB matrix.
+% Performance counters
+%   perf_profile_set_enabled - Turn the counters on or off.
+%   perf_profile_is_enabled  - True when the counters are on.
+%   perf_profile_reset       - Zero the counters.
+%   perf_profile_read        - Read the counters.
 %
 % Setup
 %   nlolib_setup             - Add nlolib (and its examples) to the MATLAB path.

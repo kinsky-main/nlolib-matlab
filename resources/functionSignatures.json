@@ -1,149 +1,495 @@
 {
   "_schemaVersion": "1.0.0",
-  "nlolib.NLolib.NLolib": {
+  "nlolib.load": {
     "inputs": [
-      {"name": "libraryPath", "kind": "optional", "type": ["file=*.so,*.dll,*.dylib"], "purpose": "Explicit path to the nlolib shared library"}
+      {
+        "name": "path",
+        "kind": "ordered",
+        "type": [
+          "file=*.so,*.dll,*.dylib"
+        ],
+        "purpose": "Shared library to load; found automatically when omitted"
+      }
+    ]
+  },
+  "nlolib.loaded_library_path": {
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "path",
+        "type": "string"
+      }
+    ]
+  },
+  "nlolib.propagate": {
+    "inputs": [
+      {
+        "name": "pulse",
+        "kind": "required",
+        "type": "struct",
+        "purpose": "samples, delta_time; optional pulse_period, frequency_grid, tensor_nt/nx/ny, delta_x/y, spatial_frequency_grid, potential_grid, wt_axis, kx_axis, ky_axis"
+      },
+      {
+        "name": "linear_operator",
+        "kind": "required",
+        "type": "function_handle",
+        "purpose": "D, applied as exp(h*D): @(A, w) temporal, @(A, wt, kx, ky, x, y, t) tensor"
+      },
+      {
+        "name": "nonlinear_operator",
+        "kind": "required",
+        "type": "function_handle",
+        "purpose": "N(A): @(A, I, V)"
+      },
+      {
+        "name": "propagation_distance",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ],
+        "purpose": "Required, > 0"
+      },
+      {
+        "name": "preset",
+        "kind": "namevalue",
+        "type": [
+          "choices={'fast','balanced','accuracy'}"
+        ],
+        "purpose": "Solver preset (default balanced)"
+      },
+      {
+        "name": "starting_step_size",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "max_step_size",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "min_step_size",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "error_tolerance",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "num_records",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar",
+          "integer"
+        ],
+        "purpose": "Records to return; 1 returns the final field only"
+      },
+      {
+        "name": "record_z",
+        "kind": "namevalue",
+        "type": "numeric",
+        "purpose": "Explicit record positions in [0, propagation_distance]"
+      },
+      {
+        "name": "return_records",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Return records (default true); false needs storage"
+      },
+      {
+        "name": "potential_operator",
+        "kind": "namevalue",
+        "type": "function_handle",
+        "purpose": "Tensor runs only: @(x, y, t)"
+      },
+      {
+        "name": "linear_step_operator",
+        "kind": "namevalue",
+        "type": "function_handle",
+        "purpose": "Per-step linear operator: @(A, D, h, w, V) temporal, @(A, D, h, wt, kx, ky, x, y, t, V) tensor"
+      },
+      {
+        "name": "constant_bindings",
+        "kind": "namevalue",
+        "type": [
+          [
+            "struct"
+          ],
+          [
+            "containers.Map"
+          ]
+        ],
+        "purpose": "Name -> real scalar for operator constants"
+      },
+      {
+        "name": "nonlinear_model",
+        "kind": "namevalue",
+        "type": [
+          "choices={'expr','kerr_raman'}"
+        ],
+        "purpose": "Nonlinear model (default expr)"
+      },
+      {
+        "name": "nonlinear_gamma",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "raman_fraction",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "raman_tau1",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "raman_tau2",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "shock_omega0",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar"
+        ]
+      },
+      {
+        "name": "raman_response_time",
+        "kind": "namevalue",
+        "type": "numeric",
+        "purpose": "Explicit complex Raman response"
+      },
+      {
+        "name": "exec_options",
+        "kind": "namevalue",
+        "type": "struct",
+        "purpose": "backend_type, fft_backend, device_heap_fraction, record_ring_target, forced_device_budget_bytes"
+      },
+      {
+        "name": "storage",
+        "kind": "namevalue",
+        "type": "struct",
+        "purpose": "sqlite_path, run_id, sqlite_max_bytes, chunk_records, cap_policy, log_final_output_field_to_db"
+      },
+      {
+        "name": "capture_step_history",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Fill result.step_history (default false)"
+      },
+      {
+        "name": "step_history_capacity",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar",
+          "integer"
+        ],
+        "purpose": "Step events kept (default 200000)"
+      },
+      {
+        "name": "live_progress",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Print progress in the Command Window while running"
+      },
+      {
+        "name": "progress_style",
+        "kind": "namevalue",
+        "type": [
+          "choices={'inline','lines'}"
+        ],
+        "purpose": "Live progress style"
+      },
+      {
+        "name": "stream_logs",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Print the runtime log buffer after the call"
+      }
     ],
     "outputs": [
-      {"name": "obj", "type": "nlolib.NLolib"}
+      {
+        "name": "result",
+        "type": "struct"
+      }
     ]
   },
-  "nlolib.NLolib.propagate": {
+  "nlolib.query_runtime_limits": {
     "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "pulse", "kind": "required", "type": "struct", "purpose": "Pulse spec: samples, delta_time, optional tensor_nt/nx/ny, delta_x/y, potential_grid"},
-      {"name": "linearOp", "kind": "required", "type": "function_handle", "purpose": "Linear operator D, applied as exp(h*D): @(A, w, wt, kx, ky, x, y, t)"},
-      {"name": "nonlinearOp", "kind": "required", "type": "function_handle", "purpose": "Nonlinear operator N(A): @(A, I, V)"},
-      {"name": "options", "kind": "required", "type": "struct", "purpose": "propagation_distance, preset, records, output, t_eval, error_tolerance, starting/max/min_step_size, nonlinear_model, nonlinear_gamma, raman_fraction, raman_tau1, raman_tau2, shock_omega0, raman_response_time, exec_options, storage"}
+      {
+        "name": "pulse",
+        "kind": "namevalue",
+        "type": "struct",
+        "purpose": "Pulse to size the limits against"
+      },
+      {
+        "name": "exec_options",
+        "kind": "namevalue",
+        "type": "struct",
+        "purpose": "Execution options"
+      }
     ],
     "outputs": [
-      {"name": "result", "type": "struct"}
+      {
+        "name": "limits",
+        "type": "struct"
+      }
     ]
   },
-  "nlolib.NLolib.query_runtime_limits": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "config", "kind": "optional", "type": "struct", "purpose": "Simulation config to size against"},
-      {"name": "execOptions", "kind": "optional", "type": "struct", "purpose": "Execution options (backend_type, fft_backend, ...)"}
-    ],
+  "nlolib.storage_is_available": {
+    "inputs": [],
     "outputs": [
-      {"name": "limits", "type": "struct"}
+      {
+        "name": "tf",
+        "type": "logical"
+      }
     ]
-  },
-  "nlolib.NLolib.storage_is_available": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"}
-    ],
-    "outputs": [
-      {"name": "tf", "type": "logical"}
-    ]
-  },
-  "nlolib.NLolib.set_log_file": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "path", "kind": "required", "type": [["char"], ["string"]], "purpose": "Log file path; empty disables file logging"},
-      {"name": "append", "kind": "optional", "type": "logical", "purpose": "Append instead of truncate (default false)"}
-    ]
-  },
-  "nlolib.NLolib.set_log_buffer": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "capacityBytes", "kind": "optional", "type": ["numeric", "scalar", "positive"], "purpose": "Ring buffer size in bytes (default 262144)"}
-    ]
-  },
-  "nlolib.NLolib.clear_log_buffer": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"}
-    ]
-  },
-  "nlolib.NLolib.read_log_buffer": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "consume", "kind": "optional", "type": "logical", "purpose": "Remove returned text from the buffer (default true)"},
-      {"name": "maxBytes", "kind": "optional", "type": ["numeric", "scalar"], "purpose": "Maximum bytes to read (default 262144)"}
-    ],
-    "outputs": [
-      {"name": "text", "type": "string"}
-    ]
-  },
-  "nlolib.NLolib.tail_logs": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "consume", "kind": "optional", "type": "logical", "purpose": "Remove printed text from the buffer (default true)"},
-      {"name": "maxBytes", "kind": "optional", "type": ["numeric", "scalar"], "purpose": "Maximum bytes to print (default 262144)"}
-    ],
-    "outputs": [
-      {"name": "text", "type": "string"}
-    ]
-  },
-  "nlolib.NLolib.set_log_level": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "level", "kind": "optional", "type": ["numeric", "scalar", "integer"], "purpose": "Log level threshold (default 2)"}
-    ]
-  },
-  "nlolib.NLolib.set_progress_options": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "enabled", "kind": "optional", "type": "logical", "purpose": "Show the progress bar (default true)"},
-      {"name": "milestonePercent", "kind": "optional", "type": ["numeric", "scalar", "integer"], "purpose": "Percent between progress updates (default 5)"},
-      {"name": "emitOnStepAdjust", "kind": "optional", "type": "logical", "purpose": "Also report step-size changes (default false)"}
-    ]
-  },
-  "nlolib.NLolib.set_progress_stream": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "streamMode", "kind": "optional", "type": ["numeric", "scalar", "integer"], "purpose": "Progress output stream (default 0 = stderr)"}
-    ]
-  },
-  "nlolib.NLolib.perf_profile_set_enabled": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"},
-      {"name": "enabled", "kind": "optional", "type": "logical", "purpose": "Enable perf counters (default true)"}
-    ]
-  },
-  "nlolib.NLolib.perf_profile_is_enabled": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"}
-    ],
-    "outputs": [
-      {"name": "tf", "type": "logical"}
-    ]
-  },
-  "nlolib.NLolib.perf_profile_reset": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"}
-    ]
-  },
-  "nlolib.NLolib.perf_profile_read": {
-    "inputs": [
-      {"name": "obj", "kind": "required", "type": "nlolib.NLolib"}
-    ],
-    "outputs": [
-      {"name": "snapshot", "type": "struct"}
-    ]
-  },
-  "nlolib.NLolib.unload": {
-    "inputs": []
   },
   "nlolib.tensor_record_view": {
     "inputs": [
-      {"name": "records", "kind": "required", "type": "numeric", "purpose": "One record, or the records matrix from propagate"},
-      {"name": "index", "kind": "optional", "type": ["numeric", "scalar", "integer"], "purpose": "Record row to view; 0 or negative counts back from the last"},
-      {"name": "nt", "kind": "required", "type": ["numeric", "scalar", "positive", "integer"], "purpose": "Time samples"},
-      {"name": "nx", "kind": "required", "type": ["numeric", "scalar", "positive", "integer"], "purpose": "Transverse x samples"},
-      {"name": "ny", "kind": "required", "type": ["numeric", "scalar", "positive", "integer"], "purpose": "Transverse y samples"}
+      {
+        "name": "record",
+        "kind": "required",
+        "type": "numeric",
+        "purpose": "One record, e.g. result.final or result.records(k, :)"
+      },
+      {
+        "name": "nt",
+        "kind": "required",
+        "type": [
+          "numeric",
+          "scalar",
+          "positive",
+          "integer"
+        ],
+        "purpose": "Time samples"
+      },
+      {
+        "name": "nx",
+        "kind": "required",
+        "type": [
+          "numeric",
+          "scalar",
+          "positive",
+          "integer"
+        ],
+        "purpose": "Transverse x samples"
+      },
+      {
+        "name": "ny",
+        "kind": "required",
+        "type": [
+          "numeric",
+          "scalar",
+          "positive",
+          "integer"
+        ],
+        "purpose": "Transverse y samples"
+      }
     ],
     "outputs": [
-      {"name": "volume", "type": "numeric"}
+      {
+        "name": "volume"
+      }
     ]
+  },
+  "nlolib.set_log_file": {
+    "inputs": [
+      {
+        "name": "path",
+        "kind": "required",
+        "type": [
+          [
+            "char"
+          ],
+          [
+            "string"
+          ]
+        ],
+        "purpose": "Log file path; empty turns file logging off"
+      },
+      {
+        "name": "append",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Append instead of truncate (default false)"
+      }
+    ]
+  },
+  "nlolib.set_log_buffer": {
+    "inputs": [
+      {
+        "name": "capacity_bytes",
+        "kind": "ordered",
+        "type": [
+          "numeric",
+          "scalar",
+          "positive"
+        ],
+        "purpose": "Ring buffer size in bytes (default 262144)"
+      }
+    ]
+  },
+  "nlolib.clear_log_buffer": {
+    "inputs": []
+  },
+  "nlolib.read_log_buffer": {
+    "inputs": [
+      {
+        "name": "consume",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Remove the returned text from the buffer (default true)"
+      },
+      {
+        "name": "max_bytes",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar",
+          "integer"
+        ],
+        "purpose": "Maximum bytes to read (default 262144)"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "text",
+        "type": "string"
+      }
+    ]
+  },
+  "nlolib.set_log_level": {
+    "inputs": [
+      {
+        "name": "level",
+        "kind": "ordered",
+        "type": [
+          "choices={'error','warn','info','debug'}"
+        ],
+        "purpose": "Log level threshold (default info)"
+      }
+    ]
+  },
+  "nlolib.set_progress_options": {
+    "inputs": [
+      {
+        "name": "enabled",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Show the progress bar (default true)"
+      },
+      {
+        "name": "milestone_percent",
+        "kind": "namevalue",
+        "type": [
+          "numeric",
+          "scalar",
+          "integer"
+        ],
+        "purpose": "Percent between updates (default 5)"
+      },
+      {
+        "name": "emit_on_step_adjust",
+        "kind": "namevalue",
+        "type": "logical",
+        "purpose": "Also report step-size changes (default false)"
+      }
+    ]
+  },
+  "nlolib.set_progress_stream": {
+    "inputs": [
+      {
+        "name": "stream_mode",
+        "kind": "ordered",
+        "type": [
+          "choices={'stderr','stdout','both'}"
+        ],
+        "purpose": "Progress output stream (default stderr)"
+      }
+    ]
+  },
+  "nlolib.perf_profile_set_enabled": {
+    "inputs": [
+      {
+        "name": "enabled",
+        "kind": "ordered",
+        "type": "logical",
+        "purpose": "Enable the counters (default true)"
+      }
+    ]
+  },
+  "nlolib.perf_profile_is_enabled": {
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tf",
+        "type": "logical"
+      }
+    ]
+  },
+  "nlolib.perf_profile_reset": {
+    "inputs": []
+  },
+  "nlolib.perf_profile_read": {
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "snapshot",
+        "type": "struct"
+      }
+    ]
+  },
+  "nlolib.unload": {
+    "inputs": []
   },
   "nlolib_setup": {
     "inputs": [
-      {"name": "saveToPath", "kind": "optional", "type": "logical", "purpose": "Also save the updated MATLAB path (default false)"}
+      {
+        "name": "saveToPath",
+        "kind": "ordered",
+        "type": "logical",
+        "purpose": "Also save the updated MATLAB path (default false)"
+      }
     ],
     "outputs": [
-      {"name": "addedPaths", "type": "string"}
+      {
+        "name": "addedPaths",
+        "type": "string"
+      }
     ]
   }
 }
