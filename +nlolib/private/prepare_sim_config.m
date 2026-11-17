@@ -65,6 +65,12 @@ tensorNy = double(get_optional(cfg, "tensor_ny", 0));
 if tensorNt > 0
     spatialMl.nx = uint64(tensorNx);
     spatialMl.ny = uint64(tensorNy);
+elseif isfield(cfg, "limits_query_nt") && ~isempty(cfg.limits_query_nt)
+    % A limits query states its sample count in time.nt, and the core sizes
+    % the grid as time.nt * spatial.nx * spatial.ny, so the transverse extent
+    % must be 1 here or the query sizes an nt x nt grid.
+    spatialMl.nx = uint64(1);
+    spatialMl.ny = uint64(1);
 else
     spatialMl.nx = uint64(numTs);
     spatialMl.ny = uint64(1);

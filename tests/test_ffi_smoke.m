@@ -190,6 +190,25 @@ verifyClass(testCase, limits.storage_available, 'logical');
 verifyGreaterThan(testCase, double(nlolib.query_runtime_limits().max_num_time_samples_runtime), 0);
 end
 
+function testRuntimeLimitsScaleWithTheSampleCount(testCase)
+% The working set grows linearly with the samples of a temporal pulse, and a
+% tensor pulse is sized as nt * nx * ny, not as a square of either.
+pulse = gaussian_pulse(testCase);
+n = numel(pulse.samples);
+double_pulse = struct('samples', [pulse.samples, pulse.samples], 'delta_time', pulse.delta_time);
+tensor = struct('samples', zeros(1, n), 'delta_time', pulse.delta_time, ...
+                'tensor_nt', n / 4, 'tensor_nx', 2, 'tensor_ny', 2);
+cpu = struct('backend_type', "cpu");
+one = nlolib.query_runtime_limits(pulse=pulse, exec_options=cpu);
+two = nlolib.query_runtime_limits(pulse=double_pulse, exec_options=cpu);
+cube = nlolib.query_runtime_limits(pulse=tensor, exec_options=cpu);
+bytesOne = double(one.estimated_required_working_set_bytes);
+verifyGreaterThan(testCase, bytesOne, 0);
+verifyEqual(testCase, double(two.estimated_required_working_set_bytes) / bytesOne, 2, 'RelTol', 0.25);
+% Per sample a tensor run holds more buffers, but nowhere near n times more.
+verifyLessThan(testCase, double(cube.estimated_required_working_set_bytes) / bytesOne, 8);
+end
+
 function testLogBufferRoundTrip(testCase)
 % Covers the char* / cstring marshalling of nlolib_read_log_buffer.
 nlolib.set_log_buffer(65536);
