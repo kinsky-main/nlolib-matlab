@@ -20,6 +20,9 @@ no C compiler, no Visual C++ redistributable, no Vulkan runtime. The toolbox
 ships the native library and a prebuilt `loadlibrary` prototype for both
 platforms.
 
+Upgrading from 1.x? 2.0.0 replaces the API; the user guide's
+[Upgrading from 1.x](docs/user_guide.md#upgrading) section lists every change.
+
 ## Quick start
 
 A run is one call: a pulse, a linear and a nonlinear operator, and options by

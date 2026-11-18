@@ -29,7 +29,7 @@ CPU backend runs unchanged.
 Verify, and add the examples for the current session:
 
 ```matlab
-api = nlolib.NLolib();
+nlolib.load();
 nlolib_setup();
 ```
 
@@ -44,6 +44,12 @@ Every bundle shares one fixed toolbox GUID, so installing a newer
 `nlolib.mltbx` replaces the installed one in place. Installs made before 1.13.0,
 and from the first 1.13.0 build, carry a different identifier and must be
 uninstalled by hand — the user guide has a snippet.
+
+Coming from 1.x? 2.0.0 replaced the API: `nlolib.NLolib` and `nlolib.constants` are gone,
+operators are function handles passed to `nlolib.propagate`, and enum values are
+strings. The user guide's
+[Upgrading from 1.x](https://github.com/kinsky-main/nlolib-matlab/blob/main/docs/user_guide.md#upgrading)
+section lists every change.
 
 Full documentation:
 [`docs/matlab_user_guide.md`](https://github.com/kinsky-main/nlolib-matlab/blob/main/docs/user_guide.md)
