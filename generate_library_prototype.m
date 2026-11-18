@@ -13,7 +13,7 @@ function protoPath = generate_library_prototype(libraryPath, headerPath, outputD
 %   no compiler on the client.  The prototype resolves the thunk relative to
 %   its own location, so the two files must stay in the same folder.
 %
-%   See also NLOLIB.NLOLIB, PACKAGE_MLTBX.
+%   See also NLOLIB.LOAD, PACKAGE_MLTBX.
 
 if nargin < 3 || strlength(string(outputDir)) == 0
     error('nlolib:prototypeArgs', ...

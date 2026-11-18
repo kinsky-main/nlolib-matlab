@@ -23,6 +23,7 @@ values exist in the Python and Julia packages.
 - [SQLite Storage](#storage)
 - [Troubleshooting](#troubleshooting)
 - [Example Scripts](#examples)
+- [Upgrading from 1.x](#upgrading)
 
 <a name="install"></a>
 
@@ -51,12 +52,12 @@ live progress bar in a build tree.
 Fetch and install the newest release in one step:
 
 ```matlab
-f = websave([tempname '.mltbx'], 'https://github.com/kinsky-main/nlo-rk4ip-code/releases/latest/download/nlolib.mltbx');
+f = websave([tempname '.mltbx'], 'https://github.com/kinsky-main/nlolib-matlab/releases/latest/download/nlolib.mltbx');
 matlab.addons.toolbox.installToolbox(f);
 ```
 
 That URL always resolves to the current release. To pin a version, replace
-`latest/download` with `download/1.13.0`.
+`latest/download` with `download/2.0.0`.
 
 Otherwise download `nlolib.mltbx` from the GitHub release page and
 double-click it in MATLAB, use **Home -> Add-Ons -> Install from File**, or:
@@ -708,6 +709,77 @@ quickstart
 Plots are written under `examples/output/<example-name>/` (or the folder in
 `NLOLIB_EXAMPLE_OUTPUT`). The largest, `high_order_grin_soliton`, returns
 805 MB of records.
+
+<a name="upgrading"></a>
+
+## Upgrading from 1.x
+
+2.0.0 removes the 1.x API; old scripts need these changes.
+
+- **No client object.** `nlolib.NLolib` is gone. Call the package functions
+  directly: `nlolib.propagate`, `nlolib.query_runtime_limits`,
+  `nlolib.set_log_level` and the rest. `nlolib.load(path)` loads a specific
+  library, and `nlolib.unload` and `nlolib.loaded_library_path` complete the set.
+- **One propagate call.** `nlolib.propagate(pulse, linear_operator,
+  nonlinear_operator, name=value...)` replaces the options-struct form and the
+  low-level forms. `prepare_sim_config`, `pack_complex_array`, `unpack_records`
+  and `debug_probe_complex_ptr` are private.
+- **Operators are function handles only.** A string operator raises
+  `nlolib:invalidOperator`. Arguments bind to symbols by name first and then in
+  order. Naming a symbol the run type lacks, or giving two arguments for one
+  symbol, is an error, so check old signatures such as `@(A, w, wt, kx, ky)`.
+  Free variables are captured as constants automatically, and
+  `constant_bindings` overrides them by name. See
+  [Describing the Operators](#operators).
+- **Strings, not constants.** `nlolib.constants` is gone. Enum options take
+  lowercase strings: `backend_type="vulkan"`, `fft_backend="vkfft"`,
+  `nonlinear_model="kerr_raman"`, `cap_policy="stop_writes"`,
+  `set_log_level("debug")`. Status fields come back as strings too, for example
+  `meta.status == "ok"`.
+- **Records.** `num_records` and `record_z` replace `records`,
+  `num_recorded_samples` and `explicit_record_z`, and there is no `output`
+  option. See [Which records come back](#options). A single `record_z` position
+  now returns the field at that position, with `z_axis` equal to it, instead of
+  the final field. `result.final` is the last returned record,
+  `records(end, :)`.
+- **In-memory record limit.** The number of records `propagate` returns in
+  memory is no longer a fixed constant. It is derived from the host memory
+  available at call time, and a larger request fails with
+  `nlolib:statusFailed` (`"invalid_argument"`). Check it with
+  [`query_runtime_limits`](#limits) (`max_num_recorded_samples_in_memory`), or
+  stream records with `storage`.
+- **Seven error identifiers.** Every error is one of `nlolib:invalidOperator`,
+  `invalidPulse`, `invalidOption`, `libraryLoadFailed`, `unavailable`,
+  `statusFailed` or `propagationAborted`. See [Troubleshooting](#troubleshooting).
+  A `catch` that tested an older identifier needs the new one.
+
+Renamed and removed names:
+
+| 1.x | 2.0.0 |
+|---|---|
+| `nlolib.NLolib`, `api.propagate(...)`, `api.<method>(...)` | `nlolib.propagate(...)`, `nlolib.<function>(...)`, `nlolib.load`, `nlolib.unload`, `nlolib.loaded_library_path` |
+| `propagate(pulse, lin, nonlin, options)` | `propagate(pulse, lin, nonlin, name=value...)` |
+| `linear_factor_fn`, `nonlinear_fn`, `potential_fn`, `linear_fn` | `linear_operator`, `nonlinear_operator`, `potential_operator`, `linear_step_operator` |
+| `dispersion_factor_fn`, `dispersion_fn`, `tensor_layout`, `output`, `output_mode` | removed |
+| `auto_capture_constants`, raw `constants` | removed; capture is always on, and `constant_bindings` overrides it by name |
+| `records`, `num_recorded_samples` / `explicit_record_z` | `num_records` / `record_z` |
+| `nlolib.constants` and the integer constants | lowercase strings |
+| `tensor_record_view(records, index, nt, nx, ny)` | `tensor_record_view(record, nt, nx, ny)` |
+| `query_runtime_limits(config, ...)` | `query_runtime_limits(pulse=..., exec_options=...)` |
+| `exec_options.capture_step_history`, `.step_history_capacity` | top-level options |
+| `storage.return_records` | top-level `return_records` |
+| `exec_options.matlab_live_progress`, `matlab_progress_style`, `matlab_stream_logs` | options `live_progress`, `progress_style`, `stream_logs` |
+| `matlab_debug`, `matlab_log_buffer_bytes`, `matlab_progress_stream`, `options.execOptions`, `tail_logs` | removed |
+| `meta.step_history`, `meta.storage_result`, `meta.step_history_dropped` | `result.step_history`, `result.storage_result`, `step_history.dropped` |
+| `meta` keys `output`, `records`, `message`, `storage_enabled`, `records_returned` | removed |
+| camelCase argument names (`capacityBytes`, `streamMode`, ...) | the shared snake_case names |
+| `nlolib:stringOperatorRemoved`, `invalidOperatorSpec` | `nlolib:invalidOperator` |
+| `nlolib:invalidPulseSpec`, `invalidTensorShape`, `invalidPotentialGridShape`, `invalidSpatialFrequencyGridShape`, `invalidInputField`, `inputFieldLengthMismatch` | `nlolib:invalidPulse` |
+| `nlolib:invalidPropagateCall`, `invalidSimulateOptions`, `invalidSimulatePreset`, `invalidStorageOptions`, `invalidRecordZ`, `invalidStepHistoryCapacity`, `invalidLogBufferRead`, `invalidTensorRecordView`, `tooManyRuntimeConstants` | `nlolib:invalidOption` |
+| `nlolib:propagateFailed`, `runtimeLimitsFailed`, `perfProfileFailed`, `logFileFailed`, `logBufferFailed`, `logBufferReadFailed`, `logLevelFailed`, `progressOptionsFailed`, `progressStreamFailed` | `nlolib:statusFailed`; an abort is `nlolib:propagationAborted` |
+| `nlolib:logUnavailable`, `perfProfileUnavailable`, `runtimeLimitsUnavailable`, `storageUnavailable` | `nlolib:unavailable` |
+| `nlolib:libraryNotFound`, `loadlibraryNotFound`, `loadlibraryWarnings`, `headerNotFound`, `simConfigTypeUnavailable`, `notLoaded` | `nlolib:libraryLoadFailed` |
+| `nlolib:legacyApiRemoved` | removed |
 
 ## Related Reference
 
