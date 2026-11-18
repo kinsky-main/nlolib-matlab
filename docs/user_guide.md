@@ -330,10 +330,9 @@ result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
                           propagation_distance=0.05, record_z=[0.0, 0.005, 0.02, 0.05]);   % 4 records
 ```
 
-A single `record_z` position is meant to return the field at that \f$z\f$. The
-core library this release builds against still returns the final field
-whenever exactly one record is requested, so `result.z_axis` is then
-`propagation_distance`, the position of the field actually returned.
+A single `record_z` position returns the field at that \f$z\f$, like any other
+length. `result.final` is the last returned record, so with a `record_z` that
+ends before \f$L\f$ it is the field at `record_z(end)`, not at \f$L\f$.
 
 ### Presets
 
@@ -379,7 +378,7 @@ result = nlolib.propagate(pulse, linearOperator, nonlinearOperator, ...
 |---|---|---|
 | `records` | `numRecords x numSamples` complex | recorded fields, one row per \f$z\f$ sample |
 | `z_axis` | numeric | \f$z\f$ of each record |
-| `final` | `1 x numSamples` complex | last row of `records`, `[]` when nothing was returned |
+| `final` | `1 x numSamples` complex | the last returned record, `records(end, :)`; the field at \f$L\f$ unless `record_z` ends earlier; `[]` when nothing was returned |
 | `step_history` | struct or `[]` | solver telemetry when `capture_step_history`, see below |
 | `storage_result` | struct or `[]` | what was written when `storage` is given |
 | `meta` | struct | `preset`, `records_requested`, `records_written`, `backend_requested`, `coupled`, `status` |

@@ -50,7 +50,8 @@ xlabel('t'); ylabel('z');
 ```
 
 `result.records` holds one row per recorded `z` (`result.z_axis`), and
-`result.final` is the field at `propagation_distance`. `result.meta` says what
+`result.final` is the last returned record: the field at `propagation_distance`
+unless a `record_z` ends earlier. `result.meta` says what
 ran (`preset`, `records_requested`, `records_written`, `backend_requested`,
 `coupled`, `status`). The library is loaded on first use; `nlolib.load(path)`
 picks a specific one.

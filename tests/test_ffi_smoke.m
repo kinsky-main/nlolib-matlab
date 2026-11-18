@@ -107,15 +107,18 @@ verifyEqual(testCase, result.z_axis, recordZ, 'AbsTol', 1e-12);
 verifyEqual(testCase, result.records(1, :), gaussian_pulse(testCase).samples, 'AbsTol', 1e-12);
 end
 
-function testSingleRecordZReportsTheFieldReturned(testCase)
-% Known core discrepancy (core docs/binding_api_vocabulary.md): with one
-% record requested, nlolib_propagate returns the field at
-% propagation_distance whatever the position, so z_axis must say that.
-final = run(testCase, num_records=1);
+function testSingleRecordZReturnsTheFieldAtThatPosition(testCase)
+% One record_z position is dense output at that z, as for any length, and
+% final is that record, not the field at propagation_distance.
+dense = run(testCase, record_z=[0.0, 0.01, 0.03, 0.05]);
 mid = run(testCase, record_z=0.01);
+finalOnly = run(testCase, num_records=1);
 verifySize(testCase, mid.records, [1, testCase.TestData.n]);
-verifyEqual(testCase, mid.z_axis, 0.05);
-verifyEqual(testCase, mid.final, final.final, 'AbsTol', 1e-12);
+verifyEqual(testCase, mid.z_axis, 0.01);
+verifyEqual(testCase, mid.final, mid.records(end, :));
+scale = max(abs(dense.records(2, :)));
+verifyLessThan(testCase, max(abs(mid.final - dense.records(2, :))) / scale, 1e-6);
+verifyGreaterThan(testCase, max(abs(mid.final - finalOnly.final)) / scale, 1e-3);
 end
 
 function testShortRecordCountIsTruncatedNotAnError(testCase)
