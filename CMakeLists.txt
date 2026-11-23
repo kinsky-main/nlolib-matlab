@@ -59,6 +59,30 @@ add_custom_command(TARGET matlab_stage POST_BUILD
     COMMENT "Copying MATLAB wrapper, setup script, examples, docs, header, and shared library to ${MATLAB_STAGE_DIR}"
 )
 
+# progress_mex prints the live progress bar in the Command Window. Build it
+# with the toolbox whenever a MATLAB installation is found; without it the
+# logs are printed after each run.
+find_package(Matlab QUIET COMPONENTS MX_LIBRARY)
+if(Matlab_FOUND)
+  matlab_add_mex(NAME progress_mex SRC "${CMAKE_CURRENT_LIST_DIR}/mex/progress_mex.c" R2018a)
+  find_library(MATLAB_UT_LIBRARY NAMES ut libut
+               HINTS "${Matlab_ROOT_DIR}/bin/glnxa64"
+                     "${Matlab_ROOT_DIR}/extern/lib/win64/microsoft"
+                     "${Matlab_ROOT_DIR}/bin/maci64" "${Matlab_ROOT_DIR}/bin/maca64"
+               NO_DEFAULT_PATH)
+  target_link_libraries(progress_mex ${MATLAB_UT_LIBRARY} ${CMAKE_DL_LIBS})
+  add_dependencies(matlab_stage progress_mex)
+  add_custom_command(TARGET matlab_stage POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "$<TARGET_FILE:progress_mex>"
+          "${MATLAB_STAGE_DIR}/+nlolib/private/$<TARGET_FILE_NAME:progress_mex>"
+      COMMENT "Copying progress_mex to ${MATLAB_STAGE_DIR}"
+  )
+else()
+  message(STATUS "MATLAB not found; matlab_stage stages no progress_mex "
+                 "(no live progress bar; logs are printed after each run).")
+endif()
+
 if(BUILD_TESTING AND NLOLIB_BUILD_MATLAB_TESTS)
   add_subdirectory(tests)
 endif()

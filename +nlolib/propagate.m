@@ -267,7 +267,12 @@ callbackAddress = uint64(0);
 if liveProgress && progressSettings.enabled
     callbackAddress = live_progress_callback(progressStyle, progressSettings.milestone_percent);
 end
-if callbackAddress ~= uint64(0)
+% The native bar and the logs go to the process's stdout/stderr, which only a
+% terminal or a -batch log shows. In the desktop, MATLAB Online or
+% matlab-proxy nobody reads them; under matlab-proxy stderr is a pipe, and
+% once it fills the solver blocks writing to it. Without the MEX callback the
+% logs are printed after the run there instead.
+if callbackAddress ~= uint64(0) || ~native_output_visible()
     streamLogs = true;
     apply_native_progress(false, progressSettings);
     restoreProgress = onCleanup(@() apply_native_progress(true, progressSettings)); %#ok<NASGU>
@@ -277,7 +282,7 @@ if streamLogs && require_function('nlolib_set_log_buffer', false)
     nlolib.set_log_buffer(logBufferBytes);
     nlolib.clear_log_buffer();
 end
-if running_in_batch_mode() && require_function('nlolib_set_progress_stream', false)
+if native_output_visible() && require_function('nlolib_set_progress_stream', false)
     nlolib.set_progress_stream("both");
 end
 
@@ -584,11 +589,7 @@ function style = default_progress_style()
 % Windows (matlab-proxy, MATLAB Online, the R2025a+ desktop) print backspaces
 % instead of erasing, so an in-place bar grows into one long line.
 style = 'inline';
-browserUi = ~isempty(getenv('MWI_APP_PORT')) || contains(getenv('MW_CONTEXT_TAGS'), 'MATLAB_PROXY');
-try
-    browserUi = browserUi || matlab.internal.environment.context.isMATLABOnline();
-catch
-end
+browserUi = browser_session();
 try
     browserUi = browserUi || (usejava('desktop') && ~isMATLABReleaseOlderThan('R2025a'));
 catch
@@ -606,10 +607,22 @@ catch
 end
 end
 
-function tf = running_in_batch_mode()
+function tf = native_output_visible()
+% True when the process's stdout/stderr is what the user sees: a terminal or a
+% -batch log. Not the desktop, and not a browser session, which also runs
+% without the desktop.
 try
-    tf = ~usejava('desktop');
+    tf = ~usejava('desktop') && ~browser_session();
 catch
     tf = false;
+end
+end
+
+function tf = browser_session()
+% matlab-proxy or MATLAB Online.
+tf = ~isempty(getenv('MWI_APP_PORT')) || contains(getenv('MW_CONTEXT_TAGS'), 'MATLAB_PROXY');
+try
+    tf = tf || matlab.internal.environment.context.isMATLABOnline();
+catch
 end
 end

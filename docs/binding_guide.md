@@ -40,8 +40,9 @@ The shared library (`nlolib.dll` / `libnlolib.so` / `libnlolib.dylib`) must be
 reachable at runtime; the wrapper searches common staged and build-tree
 locations, and `NLOLIB_LIBRARY` overrides the search. In a build tree with no
 staged prototype the wrapper falls back to parsing `nlolib_matlab.h`, which
-does need a compiler — run `generate_library_prototype.m` to avoid it,
-and `build_progress_mex.m` for the live progress bar.
+does need a compiler — run `generate_library_prototype.m` to avoid it.
+`matlab_stage` compiles the live progress bar's `progress_mex` when CMake finds
+MATLAB; a build without it prints the logs after each run instead.
 
 ## Packaging a Release
 
