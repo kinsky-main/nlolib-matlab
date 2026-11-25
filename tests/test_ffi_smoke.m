@@ -157,6 +157,36 @@ verifyError(testCase, @() run(testCase, exec_options=struct('capture_step_histor
 verifyError(testCase, @() run(testCase, return_records=false), 'nlolib:invalidOption');
 end
 
+function testLiveProgressMatchesAQuietRun(testCase)
+% The polled job returns what the same run returns without any output, and
+% prints one final progress line.
+quiet = run(testCase, num_records=4, live_progress=false);
+[text, live] = evalc('run(testCase, num_records=4, live_progress=true, progress_style="lines")');
+verifyEqual(testCase, live.records, quiet.records);
+verifyEqual(testCase, live.meta.records_written, 4);
+verifyEqual(testCase, count(text, "[nlolib] [complete] 100.00%"), 1);
+verifyEqual(testCase, count(text, "[nlolib] [running]") <= 100 / 5 + 1, true);
+end
+
+function testCommandWindowOutputIsBounded(testCase)
+% Thousands of steps at debug log level must not reach the Command Window
+% one by one: output is sampled once per second and logs are capped per run.
+nlolib.set_log_level("debug");
+restoreLevel = onCleanup(@() nlolib.set_log_level());
+nlolib.set_progress_options(enabled=true, milestone_percent=1);
+restoreProgress = onCleanup(@() nlolib.set_progress_options());
+for style = ["lines", "inline"]
+    [text, result] = evalc(['run(testCase, num_records=2, live_progress=true, ' ...
+                            'progress_style=style, starting_step_size=1e-5, ' ...
+                            'min_step_size=1e-5, max_step_size=1e-5)']);
+    verifyEqual(testCase, result.meta.status, "ok");
+    progressLines = count(text, "[nlolib] [running]") + count(text, "[nlolib] [complete]");
+    verifyGreaterThanOrEqual(testCase, progressLines, 1);
+    verifyLessThanOrEqual(testCase, progressLines, 101);
+    verifyLessThanOrEqual(testCase, strlength(text), 65536 + 101 * 256);
+end
+end
+
 function testStorage(testCase)
 if ~nlolib.storage_is_available()
     assumeFail(testCase, 'SQLite storage is not compiled into this build');

@@ -1,8 +1,8 @@
 ## nlolib @VERSION@ — one MATLAB toolbox for every platform
 
 `nlolib.mltbx` carries the Windows and Linux binaries side by side under
-`lib/win64` and `lib/glnxa64`, each with its own `loadlibrary` prototype, thunk
-and progress MEX. MATLAB loads the folder matching `computer('arch')`, so the
+`lib/win64` and `lib/glnxa64`, each with its own `loadlibrary` prototype and
+thunk. MATLAB loads the folder matching `computer('arch')`, so the
 same download works on both platforms.
 
 ### Install

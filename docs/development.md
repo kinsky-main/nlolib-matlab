@@ -9,7 +9,6 @@ repository, [nlo-rk4ip-code](https://github.com/kinsky-main/nlo-rk4ip-code).
 | Path | Contents |
 | --- | --- |
 | `+nlolib/`, `nlolib_setup.m` | the wrapper |
-| `mex/` | the progress-callback MEX source |
 | `tests/` | MATLAB unit tests, run by the `test_matlab_bindings` CTest case |
 | `examples/` | example scripts and their `+backend` helpers |
 | `package_mltbx.m`, `merge_mltbx.m`, `tools/` | toolbox packaging |

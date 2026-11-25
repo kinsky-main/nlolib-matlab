@@ -187,16 +187,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # loadlibrary and mex both need a C compiler MATLAB recognises; without
+      # loadlibrary needs a C compiler MATLAB recognises; without
       # one the packaging step fails deep inside loadlibrary, so name it here.
       - name: Show the C compiler MATLAB found
         uses: matlab-actions/run-command@v3
         with:
           command: cfg = mex.getCompilerConfigurations('C', 'Installed'); if isempty(cfg), disp('NO C COMPILER DETECTED'); else, disp({cfg.Name}); disp({cfg.Version}); end
 
-      # package_mltbx stages the tree, generates the loadlibrary prototype and
-      # thunk, and compiles the progress MEX, so the shipped toolbox needs no
-      # compiler on the user's machine.
+      # package_mltbx stages the tree and generates the loadlibrary prototype
+      # and thunk, so the shipped toolbox needs no compiler on the user's
+      # machine.
       - name: Package toolbox
         uses: matlab-actions/run-command@v3
         with:
@@ -209,7 +209,6 @@ jobs:
           stage="build/matlab_toolbox"
           test -f "$stage/lib/nlolib_matlab.h"
           test -f "$stage/lib/${{ matrix.arch }}/nlolib_proto.m"
-          ls "$stage"/+nlolib/private/progress_mex.*
           ls dist/nlolib-*-${{ matrix.arch }}.mltbx
 
       - uses: actions/upload-artifact@v4
@@ -261,8 +260,6 @@ jobs:
           grep -q "<cp:version>${VERSION}</cp:version>" "$work/metadata/coreProperties.xml"
           test -f "$work/fsroot/lib/win64/nlolib.dll"
           test -f "$work/fsroot/lib/glnxa64/libnlolib.so"
-          test -f "$work/fsroot/+nlolib/private/progress_mex.mexw64"
-          test -f "$work/fsroot/+nlolib/private/progress_mex.mexa64"
           echo "merged bundle looks right"
 
       - uses: actions/upload-artifact@v4

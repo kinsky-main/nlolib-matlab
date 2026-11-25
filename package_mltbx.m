@@ -58,10 +58,6 @@ end
 % needs a C compiler on the client.
 package_mltbx_generate_prototype(matlabDir, stageDir);
 
-% Compile the live progress MEX here as well, so users get the Command
-% Window progress bar without a compiler.
-build_progress_mex(fullfile(stageDir, "+nlolib", "private"));
-
 version = package_mltbx_read_version(fullfile(matlabDir, "VERSION"));
 platformTag = package_mltbx_platform_tag();
 artifactName = sprintf('nlolib-%s-%s.mltbx', version, platformTag);

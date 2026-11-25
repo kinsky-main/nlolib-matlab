@@ -9,8 +9,7 @@ function artifactPath = merge_mltbx(bundles, outputPath)
 %     merge_mltbx(["dist/nlolib-1.13.0-glnxa64.mltbx", ...
 %                  "dist/nlolib-1.13.0-win64.mltbx"])
 %
-%   Each bundle keeps its binaries in lib/<arch> and its progress MEX under
-%   +nlolib/private with a platform extension, so those files are simply
+%   Each bundle keeps its binaries in lib/<arch>, so those files are simply
 %   combined.  Every other file must be identical in all bundles (line
 %   endings aside); a difference means the bundles were built from different
 %   sources and the merge stops.  All bundles must have the same version.
