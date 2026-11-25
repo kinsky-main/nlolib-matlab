@@ -67,10 +67,12 @@ function result = propagate(pulse, linear_operator, nonlinear_operator, options)
 %     step_history_capacity default 200000 events
 %   MATLAB only:
 %     live_progress         print progress and logs in the Command Window
-%                           while running; Ctrl+C aborts. Default true except
-%                           under -batch.
-%     progress_style        "inline" (one line redrawn) or "lines"
-%     stream_logs           print the runtime log buffer after the call
+%                           while running. Default true except under -batch.
+%     progress_style        "inline" (progress, rejection-rate and step-size
+%                           bars redrawn in place) or "lines"
+%     stream_logs           print the runtime log buffer while running
+%   Ctrl+C stops the run. Output is rate limited: at most one update per
+%   second and 64 KiB of log text per run.
 %
 %   Records: with record_z, exactly those positions, for any number of
 %   them. Without it, num_records = 1 returns the final field only and z_axis is
@@ -240,10 +242,10 @@ end
 captureStepHistory = logical_option(options.capture_step_history, 'capture_step_history');
 stepHistoryCapacity = uint64(count_option(options.step_history_capacity, 'step_history_capacity', 1));
 
-% Command Window output: nlolib calls the progress_mex C callback, which
-% prints the log buffer and a progress line through MATLAB. The native stderr
-% bar is switched off for the call, since MATLAB does not show the library's
-% stdout/stderr.
+% Command Window output: MATLAB does not show the library's stdout/stderr, so
+% the run is started as a job and run_propagate_job prints a progress line and
+% the log buffer from MATLAB while it polls. The native stderr bar is switched
+% off meanwhile.
 streamLogs = logical_option(options.stream_logs, 'stream_logs');
 liveProgress = ~batch_startup();
 if ~isempty(options.live_progress)
@@ -263,16 +265,14 @@ end
 inPtr = pack_complex_array(samples);
 
 progressSettings = library_state("progress");
-callbackAddress = uint64(0);
-if liveProgress && progressSettings.enabled
-    callbackAddress = live_progress_callback(progressStyle, progressSettings.milestone_percent);
-end
+showProgress = liveProgress && progressSettings.enabled && ...
+               require_function('nlolib_propagate_start', false);
 % The native bar and the logs go to the process's stdout/stderr, which only a
 % terminal or a -batch log shows. In the desktop, MATLAB Online or
 % matlab-proxy nobody reads them; under matlab-proxy stderr is a pipe, and
-% once it fills the solver blocks writing to it. Without the MEX callback the
-% logs are printed after the run there instead.
-if callbackAddress ~= uint64(0) || ~native_output_visible()
+% once it fills the solver blocks writing to it. So both are taken off those
+% streams there, whether or not MATLAB prints the progress itself.
+if showProgress || ~native_output_visible()
     streamLogs = true;
     apply_native_progress(false, progressSettings);
     restoreProgress = onCleanup(@() apply_native_progress(true, progressSettings)); %#ok<NASGU>
@@ -299,8 +299,8 @@ propagateOptions.output_mode = int32(outputMode);
 propagateOptions.return_records = int32(returnRecords);
 propagateOptions.exec_options = libpointer('execution_optionsPtr', execOpts);
 propagateOptions.storage_options = storageOptsPtr;
-propagateOptions.progress_callback = callbackAddress;
-% recordZPtr must outlive the calllib below, so it is kept in a local.
+propagateOptions.progress_callback = uint64(0);
+% recordZPtr must outlive the run below, so it is kept in a local.
 if isempty(recordZ)
     recordZPtr = libpointer('doublePtr');
     propagateOptions.explicit_record_z_count = uint64(0);
@@ -332,19 +332,14 @@ stepEventsDroppedPtr = libpointer('uint64Ptr', uint64(0));
 propagateOutput.step_events_written = stepEventsWrittenPtr;
 propagateOutput.step_events_dropped = stepEventsDroppedPtr;
 
-statusRaw = calllib('nlolib', 'nlolib_propagate', simCfgPtr, physicsCfgPtr, ...
-                    uint64(numTimeSamples), inPtr, propagateOptions, propagateOutput);
-
-logs = "";
-if streamLogs && require_function('nlolib_read_log_buffer', false)
-    logs = nlolib.read_log_buffer(consume=true, max_bytes=logBufferBytes);
-    if strlength(logs) > 0
-        fprintf('%s', char(logs));
-        if ~endsWith(logs, newline)
-            fprintf('\n');
-        end
-    end
-end
+% Every buffer these arguments point to is a local of this function, so it
+% outlives the job: run_propagate_job joins the job before it returns or
+% unwinds, also on Ctrl+C.
+view = struct('progress', showProgress, 'style', progressStyle, ...
+              'milestone_percent', double(progressSettings.milestone_percent), ...
+              'logs', streamLogs && require_function('nlolib_read_log_buffer', false));
+[statusRaw, logs] = run_propagate_job({simCfgPtr, physicsCfgPtr, uint64(numTimeSamples), ...
+                                       inPtr, propagateOptions, propagateOutput}, view);
 detail = "";
 if strlength(logs) > 0
     detail = "runtime logs:" + newline + logs;
@@ -572,28 +567,12 @@ calllib('nlolib', 'nlolib_set_progress_options', int32(logical(enabled)), ...
         int32(settings.milestone_percent), int32(logical(settings.emit_on_step_adjust)));
 end
 
-function address = live_progress_callback(style, milestonePercent)
-% Address of the progress_mex C callback, or 0 when the MEX file is not built
-% for this platform, in which case the logs are printed after the run.
-address = uint64(0);
-libraryPath = library_state("path");
-if isempty(libraryPath) || exist('progress_mex', 'file') ~= 3 || ...
-        ~require_function('nlolib_read_log_buffer', false)
-    return;
-end
-address = progress_mex('callback', libraryPath, char(style), double(milestonePercent));
-end
-
 function style = default_progress_style()
-% "lines" where the Command Window ignores backspace: browser-based Command
-% Windows (matlab-proxy, MATLAB Online, the R2025a+ desktop) print backspaces
-% instead of erasing, so an in-place bar grows into one long line.
+% "lines" where the Command Window may ignore backspace: matlab-proxy and
+% MATLAB Online, where an in-place bar could grow into one long line. The
+% desktop, R2025a and later included, deletes on backspace.
 style = 'inline';
 browserUi = browser_session();
-try
-    browserUi = browserUi || (usejava('desktop') && ~isMATLABReleaseOlderThan('R2025a'));
-catch
-end
 if browserUi
     style = 'lines';
 end

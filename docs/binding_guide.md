@@ -41,8 +41,6 @@ reachable at runtime; the wrapper searches common staged and build-tree
 locations, and `NLOLIB_LIBRARY` overrides the search. In a build tree with no
 staged prototype the wrapper falls back to parsing `nlolib_matlab.h`, which
 does need a compiler — run `generate_library_prototype.m` to avoid it.
-`matlab_stage` compiles the live progress bar's `progress_mex` when CMake finds
-MATLAB; a build without it prints the logs after each run instead.
 
 ## Packaging a Release
 
@@ -61,8 +59,7 @@ merge_mltbx(["dist/nlolib-1.13.0-glnxa64.mltbx", "dist/nlolib-1.13.0-win64.mltbx
 ```
 
 Each bundle keeps its shared library, `loadlibrary` prototype and thunk in
-`lib/<arch>`, and its progress MEX in `+nlolib/private` with the platform
-extension, so the merge only adds files. `merge_mltbx` stops if the bundles'
+`lib/<arch>`, so the merge only adds files. `merge_mltbx` stops if the bundles'
 versions differ or if any shared file differs (line endings aside), since
 that means they were built from different sources. All bundles use the
 toolbox identifier `nlolib`, so installing a newer one replaces the old;
@@ -206,13 +203,17 @@ objects that back the pointer fields. It must stay in scope for as long as the
 config is used, otherwise MATLAB frees the buffers underneath the library.
 
 MATLAB does not show the library's stdout/stderr, and `loadlibrary` cannot
-take MATLAB functions as C callbacks. `mex/progress_mex.c` supplies the
-C `progress_callback` instead: it prints nlolib's log buffer and a progress
-line with `mexPrintf` (at most once per second, redrawn in place or one line
-per milestone) and returns 0 on Ctrl+C. `package_mltbx` compiles it into
-`+nlolib/private`, so toolbox users need no compiler. `propagate_options`
-declares the callback field as `uint64_t` in `nlolib_matlab.h` so MATLAB can
-store the address.
+take MATLAB functions as C callbacks. `propagate` therefore starts the run as
+a job (`nlolib_propagate_start`), and `+nlolib/private/run_propagate_job.m`
+polls it every 100 ms (`nlolib_propagate_poll`), printing the log buffer and a
+progress line with `fprintf`. The solver never writes to the Command Window
+itself, so the output rate is set by that loop alone: one update per second at
+most, less often on long runs, and 64 KiB of log text per run. An `onCleanup`
+cancels and joins the job (`nlolib_propagate_cancel`, `nlolib_propagate_finish`)
+when Ctrl+C or an error unwinds the loop, before the buffers the job points
+into, which are locals of `propagate`, are released. `nlolib_matlab.h` declares
+the job handle as `uint64_t`, and leaves the `progress_callback` field of
+`propagate_options` as a `uint64_t` that the wrapper sets to 0.
 
 Why the binding is not generated with `clibgen`:
 [clibgen_evaluation.md](clibgen_evaluation.md).

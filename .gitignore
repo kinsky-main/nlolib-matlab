@@ -6,5 +6,3 @@ output/
 *.so
 *.dll
 *.dylib
-# Locally built progress MEX (see build_progress_mex.m)
-+nlolib/private/progress_mex.mex*

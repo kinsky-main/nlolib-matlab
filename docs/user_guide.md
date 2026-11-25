@@ -43,8 +43,7 @@ Working from a build tree rather than a packaged toolbox is the one case that
 still needs a compiler: with no prototype staged, `loadlibrary` falls back to
 parsing `nlolib_matlab.h`. Run `matlab/generate_library_prototype.m` once to
 remove that fallback, or check `mex -setup C` if the load fails complaining
-about the header. Run `matlab/build_progress_mex.m` once as well to get the
-live progress bar in a build tree.
+about the header.
 
 ### Option A — toolbox install (recommended)
 
@@ -67,7 +66,7 @@ matlab.addons.toolbox.installToolbox('nlolib.mltbx');
 
 One bundle covers every supported platform: it carries `lib/win64` and
 `lib/glnxa64` side by side, each holding its own shared library, `loadlibrary`
-prototype and thunk, plus a `progress_mex` per platform. MATLAB loads the
+prototype and thunk. MATLAB loads the
 folder matching `computer('arch')`. The bundle also ships `nlolib_matlab.h`,
 the example scripts, and this guide.
 
@@ -312,9 +311,9 @@ Rules that matter in practice:
 | `storage` | unset | SQLite storage, see [SQLite Storage](#storage) |
 | `capture_step_history` | `false` | fill `result.step_history` |
 | `step_history_capacity` | `200000` | step events to preallocate |
-| `live_progress` | `true` (`false` under `-batch`) | MATLAB only: print progress and logs in the Command Window during the run; Ctrl+C aborts |
+| `live_progress` | `true` (`false` under `-batch`) | MATLAB only: print progress and logs in the Command Window during the run |
 | `progress_style` | auto | MATLAB only: `"inline"` redraws one line in place; `"lines"` prints one line per milestone |
-| `stream_logs` | `false` | MATLAB only: print the runtime log buffer after the call, and attach it to the error when the run fails |
+| `stream_logs` | `false` | MATLAB only: print the runtime log buffer during the run (at most 64 KiB), and attach its end to the error when the run fails |
 
 ### Which records come back
 
@@ -545,18 +544,35 @@ fastest way to diagnose a failing run.
 ### Progress
 
 The MATLAB desktop and the VS Code MATLAB extension do not show the library's
-own stdout/stderr. `propagate` therefore prints a live progress line, and every
-runtime log line, through the Command Window while the solver runs, and Ctrl+C
-stops the run (`nlolib:propagationAborted`). This uses a small MEX file shipped
-with the toolbox (`+nlolib/private/progress_mex`). Without it (a build tree
-where `matlab/build_progress_mex.m` has not been run), the logs are printed
-after the run instead and the progress bar is not shown.
+own stdout/stderr. `propagate` therefore runs the solver on a library thread
+and polls it from MATLAB, printing a progress line and the runtime log through
+the Command Window. Ctrl+C stops the run like any other MATLAB code: the solver
+is cancelled and joined before `propagate` unwinds. Nothing needs compiling.
 
-The progress line is redrawn at most once per second, so a fast solver cannot
-queue more updates than the Command Window can paint. In browser-based MATLAB
-(matlab-proxy, MATLAB Online, and the R2025a+ desktop) the Command Window
-prints backspaces rather than erasing with them, so `propagate` prints one line
-per progress milestone instead (every 5% by default; see
+The Command Window is written to at a bounded rate, whatever the solver does:
+the solver never pushes output, `propagate` samples it. There is at most one
+update per second, the interval grows to 1/120 of the elapsed time on long
+runs (a ten-hour run redraws about 800 times in total), and at most 64 KiB of
+log text is printed per run. Past that limit one notice is printed and the
+rest is dropped from the Command Window; `nlolib.set_log_file` keeps the full
+log.
+
+In the desktop the display is three bars, each on its own line, redrawn in
+place with the filled part in the Command Window's accent colour (checked on
+R2025b, whose Command Window deletes on backspace):
+
+```text
+nlolib     ━━━━━━━━━───────────────────  28.6%  step 148  elapsed 00:10  eta 00:24
+rejected   ━━━━━━━━━━━━━━━━────────────  54.0%  175 of 324 attempts
+step size  ━━━━━━━━━━━━━━━━━━━━━━──────  0.03 um  (min 1e-05, max 0.5)
+```
+
+`rejected` is the share of step attempts so far that the adaptive solver
+rejected. `step size` places the current step between `min_step_size` (empty)
+and `max_step_size` (full) on a logarithmic scale, and prints it in the units
+of the propagation distance, labelled `um`. In matlab-proxy and MATLAB Online,
+where an in-place display is not relied on, `propagate` prints the same values
+on one line per progress milestone instead (every 5% by default; see
 `set_progress_options`). Pass `progress_style="inline"` or `"lines"` to
 override the choice.
 
@@ -664,7 +680,7 @@ Every error the package raises carries one of seven identifiers:
 | `nlolib:libraryLoadFailed` | no `nlolib.dll` / `libnlolib.so` found, or every candidate failed to load, or MATLAB's parsed type table is unusable | the message lists each library and the interface used (prototype or header); a header-parse failure means no prototype was staged and no compiler is set up — run `matlab/generate_library_prototype.m` or `mex -setup C`. For a stale type table run `nlolib.unload(); clear classes;` and check only one `nlolib` package is on the path |
 | `nlolib:unavailable` | the library was built without the feature (SQLite storage, a logging or perf entry point) | check `nlolib.storage_is_available()`, guard optional calls |
 | `nlolib:statusFailed` | the C call returned a non-OK status; the message names it (`"invalid_argument"`, `"allocation_failed"`, `"not_implemented"`) | rerun with `stream_logs=true` and `nlolib.set_log_level("debug")` |
-| `nlolib:propagationAborted` | the run was stopped (Ctrl+C during live progress) | |
+| `nlolib:propagationAborted` | the library reported the run as aborted. Ctrl+C does not raise it: it interrupts `propagate` like any MATLAB code | |
 
 An unknown option name is MATLAB's own name=value error.
 
